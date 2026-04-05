@@ -1,0 +1,373 @@
+import { useState, useEffect, useRef } from 'react';
+import APIClient, { APIRide } from '../lib/api';
+import { searchAddresses, formatAddress, GeocodingResult } from '../lib/geocoding';
+
+// --- Constants ---
+const VEHICLE_RATES: Record<string, { base: number, km: number, min: number }> = { 
+  'car': { base: 25, km: 10.0, min: 2.0 }, 
+  'taxi': { base: 30, km: 11.0, min: 2.2 }, 
+  'rickshaw': { base: 20, km: 8.0, min: 1.5 }, 
+  'motorcycle': { base: 22, km: 9.0, min: 1.8 }
+};
+
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// --- Component ---
+
+interface RideRequestSheetProps {
+  session: any;
+  initialPlanning?: boolean;
+  onPlanningClose?: () => void;
+  onPickupChange: (location: [number, number] | null, address?: string) => void;
+  onDropoffChange: (location: [number, number] | null, address?: string) => void;
+  pickupLocation: [number, number] | null;
+  pickupAddress: string;
+  dropoffLocation: [number, number] | null;
+  dropoffAddress: string;
+  stops: { position: [number, number], address: string }[];
+  onStopsChange: (stops: { position: [number, number], address: string }[]) => void;
+  onStartMapSelection: (type: 'pickup' | 'dropoff' | { type: 'stop', index: number }) => void;
+  onRideTypeChange: (type: 'ride' | 'errand' | 'taxi' | 'mototaxi') => void;
+  onLoginRequired: () => void;
+  preSelectedVehicle?: string;
+  onHeaderVisibilityChange: (hide: boolean) => void;
+  onActiveRideChange?: (active: boolean) => void;
+}
+
+export function RideRequestSheet(props: RideRequestSheetProps) {
+  const { 
+    session, initialPlanning, onPlanningClose, onPickupChange, onDropoffChange, pickupLocation, pickupAddress, dropoffLocation, dropoffAddress,
+    stops, onStopsChange, onStartMapSelection, onRideTypeChange, onLoginRequired, preSelectedVehicle, onHeaderVisibilityChange, onActiveRideChange 
+  } = props;
+
+  const [isPlanning, setIsPlanning] = useState(initialPlanning || false);
+  const [focusedInput, setFocusedInput] = useState<'pickup' | 'dropoff' | { type: 'stop', index: number }>('pickup');
+
+  const [suggestions, setSuggestions] = useState<GeocodingResult[]>([]);
+  const [searchText, setSearchText] = useState('');
+  const [step, setStep] = useState<'service' | 'selection' | 'tracking'>('service');
+  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  
+  useEffect(() => {
+    onActiveRideChange?.(!!activeRide);
+  }, [activeRide, onActiveRideChange]);
+  
+  const [vehicleType, setVehicleType] = useState<string>(preSelectedVehicle || 'car');
+  
+  useEffect(() => {
+    if (initialPlanning) {
+      setIsPlanning(true);
+      setFocusedInput('pickup');
+    }
+  }, [initialPlanning]);
+
+  useEffect(() => {
+    if (preSelectedVehicle) setVehicleType(preSelectedVehicle);
+  }, [preSelectedVehicle]);
+
+  // Auto-transition to selection when both locations are set (e.g. via Map Selection)
+  useEffect(() => {
+    if (pickupLocation && dropoffLocation && isPlanning && step !== 'tracking') {
+      setIsPlanning(false);
+      setStep('selection');
+    }
+  }, [pickupLocation, dropoffLocation, isPlanning, step]);
+
+  const [loading, setLoading] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (focusedInput === 'pickup') setSearchText(pickupAddress);
+    else if (focusedInput === 'dropoff') setSearchText(dropoffAddress);
+    else if (typeof focusedInput === 'object') setSearchText(stops[focusedInput.index]?.address || '');
+  }, [focusedInput, isPlanning]);
+
+  useEffect(() => {
+    if (!session) return;
+    const poll = async () => {
+      try {
+        const ride = await APIClient.getMyActiveRide();
+        if (ride) {
+          setActiveRide(ride);
+          setStep('tracking');
+        } else if (step === 'tracking') {
+          setStep('service');
+          setActiveRide(null);
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [session, step]);
+
+  useEffect(() => {
+    onHeaderVisibilityChange(isPlanning || step === 'tracking');
+  }, [isPlanning, step]);
+
+  const handleSearch = (text: string) => {
+    setSearchText(text);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    
+    if (text.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+
+    searchTimeoutRef.current = setTimeout(async () => {
+      const results = await searchAddresses(text);
+      setSuggestions(results);
+    }, 400);
+  };
+
+  const pickupInputRef = useRef<HTMLInputElement>(null);
+  const dropoffInputRef = useRef<HTMLInputElement>(null);
+
+  const selectSuggestion = (res: GeocodingResult) => {
+    let addr = formatAddress(res);
+    const coords: [number, number] = [res.lat, res.lon];
+
+    // House Number Persistence Logic
+    // If the suggestion lacks a house number but the user's typed search has one,
+    // we "sticky" it into the final address so it's not lost.
+    if (!res.address.house_number) {
+      const match = searchText.match(/\d+$/);
+      if (match && !addr.includes(match[0])) {
+         addr = `${addr} ${match[0]}`.replace(/,,/g, ',');
+      }
+    }
+
+    if (focusedInput === 'pickup') {
+      onPickupChange(coords, addr);
+      setFocusedInput('dropoff');
+      setTimeout(() => dropoffInputRef.current?.focus(), 50);
+    } else if (focusedInput === 'dropoff') {
+      onDropoffChange(coords, addr);
+      setIsPlanning(false);
+      setStep('selection');
+    } else if (typeof focusedInput === 'object') {
+      const newStops = [...stops];
+      newStops[focusedInput.index] = { position: coords, address: addr };
+      onStopsChange(newStops);
+      setFocusedInput('dropoff');
+      setTimeout(() => dropoffInputRef.current?.focus(), 50);
+    }
+    setSuggestions([]);
+  };
+
+  const requestRide = async () => {
+    if (!pickupLocation || !dropoffLocation) return;
+    
+    if (!session) {
+      onLoginRequired();
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const dist = calculateDistance(pickupLocation[0], pickupLocation[1], dropoffLocation[0], dropoffLocation[1]);
+      const duration = Math.ceil(dist * 2.5) + 2;
+      const rate = VEHICLE_RATES[vehicleType] || VEHICLE_RATES['car'];
+      const price = Math.ceil(rate.base + (dist * rate.km) + (duration * rate.min));
+
+      await APIClient.requestRide({
+        pickup: { lat: pickupLocation[0], lng: pickupLocation[1], address: pickupAddress },
+        dropoff: { lat: dropoffLocation[0], lng: dropoffLocation[1], address: dropoffAddress },
+        type: 'ride',
+        price,
+        distance: dist,
+        duration,
+        description: '',
+        items: '',
+      });
+      setStep('tracking');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (step === 'tracking' && activeRide) {
+    const statusMap = {
+      'requested': 'Buscando tu auto...',
+      'accepted': 'Conductor en camino',
+      'arrived': 'Ha llegado',
+      'in_progress': 'En viaje',
+      'completed': 'Llegaste a tu destino',
+      'cancelled': 'Viaje cancelado'
+    };
+
+    return (
+      <div className="ride-request-sheet fade-in">
+        <div className="tracking-view-minimal">
+          <div className="tracking-header-mini">
+            <h2 className="tracking-status-text">{statusMap[activeRide.status]}</h2>
+            {activeRide.status === 'requested' && <div className="mini-pulse"></div>}
+          </div>
+
+          <div className="driver-card-minimal">
+             <div className="driver-avatar-mini">
+               {activeRide.status === 'requested' ? '⏳' : '👤'}
+             </div>
+             <div className="driver-info-mini">
+               <div className="driver-name-mini">{activeRide.status === 'requested' ? 'Asignando...' : 'Juan'}</div>
+               <div className="vehicle-info-mini">Toyota Corolla • ZIP123</div>
+             </div>
+             <div className="driver-action-mini">
+                <button className="icon-btn-mini">📞</button>
+             </div>
+          </div>
+          
+          <div className="tracking-meta-mini">
+             <div className="meta-row"><span>Precio</span> <strong>${activeRide.totalFare}</strong></div>
+             <div className="meta-row"><span>Pago</span> <strong>Efectivo</strong></div>
+          </div>
+
+          <button className="minimal-cancel-btn" onClick={() => APIClient.cancelRide(activeRide.id)}>Cancelar</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isPlanning) {
+    return (
+      <div className="ride-planner full-screen fade-in">
+        <div className="planner-header-minimal">
+           <button className="back-btn-m" onClick={() => { setIsPlanning(false); onPlanningClose?.(); }}>←</button>
+           <h2 className="planner-title-m">¿A dónde vamos?</h2>
+        </div>
+
+        <div className="planner-inputs-minimal">
+           <div className="uber-inputs-box">
+              <div className="inputs-decoration">
+                 <div className="dec-dot origin"></div>
+                 <div className="dec-line"></div>
+                 <div className="dec-dot dest"></div>
+              </div>
+              <div className="inputs-fields">
+                <input 
+                  ref={pickupInputRef}
+                  autoFocus={focusedInput === 'pickup'}
+                  className="minimal-input"
+                  placeholder="Inicia en..."
+                  value={focusedInput === 'pickup' ? searchText : pickupAddress}
+                  onChange={(e) => focusedInput === 'pickup' && handleSearch(e.target.value)}
+                  onFocus={() => setFocusedInput('pickup')}
+                />
+                <div className="input-divider-mini"></div>
+                <input 
+                  ref={dropoffInputRef}
+                  className="minimal-input"
+                  placeholder="¿A dónde vas?"
+                  value={focusedInput === 'dropoff' ? searchText : dropoffAddress}
+                  onChange={(e) => focusedInput === 'dropoff' && handleSearch(e.target.value)}
+                  onFocus={() => setFocusedInput('dropoff')}
+                />
+              </div>
+           </div>
+        </div>
+
+        <div className="suggestions-list-minimal scrollable">
+           <div className="suggestion-item-minimal" onClick={() => onStartMapSelection(focusedInput)}>
+             <div className="s-icon-m">🗺️</div>
+             <div className="s-text-m">Fijar en el mapa</div>
+           </div>
+
+           {suggestions.map((res, i) => {
+             const mainAddr = res.address.road ? 
+               (res.address.house_number ? `${res.address.road} ${res.address.house_number}` : res.address.road) : 
+               res.display_name.split(',')[0];
+             
+             return (
+               <div key={i} className="suggestion-item-minimal" onClick={() => selectSuggestion(res)}>
+                 <div className="s-icon-m">📍</div>
+                 <div className="s-text-m">
+                   <div className="s-main">{mainAddr}</div>
+                   <div className="s-sub">{res.display_name}</div>
+                 </div>
+               </div>
+             );
+           })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ride-request-sheet fade-in">
+      <div className="sheet-handle-minimal"></div>
+      
+      {step === 'service' && (
+        <div className="service-minimal-view">
+          <h2 className="minimal-title-large">¿A dónde vamos?</h2>
+          <div className="minimal-address-card" onClick={() => { setIsPlanning(true); setFocusedInput('pickup'); }}>
+             <div className="addr-row-mini"><span className="dot-m origin"></span> {pickupAddress || 'Actual'}</div>
+             <div className="addr-row-mini"><span className="dot-m dest"></span> {dropoffAddress || '¿A dónde vas?'}</div>
+          </div>
+          
+          <div className="minimal-services-row">
+             <button className="service-button-minimal" onClick={() => { onRideTypeChange('ride'); setIsPlanning(true); setFocusedInput('pickup'); }}>
+                <span className="icon-m">🚗</span>
+                <span className="label-m">Viaje</span>
+             </button>
+             <button className="service-button-minimal" onClick={() => { onRideTypeChange('errand'); setIsPlanning(true); setFocusedInput('pickup'); }}>
+                <span className="icon-m">📦</span>
+                <span className="label-m">Envío</span>
+             </button>
+          </div>
+        </div>
+      )}
+
+      {step === 'selection' && (
+        <div className="vehicle-selection-minimal">
+          <div className="selection-header-minimal">
+            <button className="back-btn-minimal" onClick={() => setStep('service')}>←</button>
+            <div className="selection-path-mini" onClick={() => setIsPlanning(true)}>
+               {dropoffAddress.split(',')[0]}
+            </div>
+          </div>
+
+          <div className="vehicle-list-minimal scrollable">
+            {[
+              { id: 'car', name: 'ZippX', icon: '🚗', cap: 4 },
+              { id: 'taxi', name: 'Taxi', icon: '🚕', cap: 4 },
+              { id: 'motorcycle', name: 'Moto', icon: '🏍️', cap: 1 },
+              { id: 'rickshaw', name: 'Mototaxi', icon: '🛺', cap: 3 }
+            ].map(v => {
+              const dist = pickupLocation && dropoffLocation ? calculateDistance(pickupLocation[0], pickupLocation[1], dropoffLocation[0], dropoffLocation[1]) : 1;
+              const rate = VEHICLE_RATES[v.id] || VEHICLE_RATES['car'];
+              const price = Math.ceil(rate.base + (dist * rate.km) + (dist * 2.5 * rate.min));
+              
+              return (
+                <div key={v.id} className={`vehicle-item-minimal ${vehicleType === v.id ? 'active' : ''}`} onClick={() => setVehicleType(v.id)}>
+                   <div className="v-icon-m">{v.icon}</div>
+                   <div className="v-meta-m">
+                      <div className="v-name-m">{v.name} • {v.cap} pers.</div>
+                      <div className="v-eta-m">4 min</div>
+                   </div>
+                   <div className="v-price-m">${price}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="selection-footer-minimal">
+             <div className="payment-mini">💵 Efectivo ▾</div>
+             <button className="confirm-button-minimal" onClick={requestRide} disabled={loading}>
+               {loading ? '...' : `Pedir ${vehicleType}`}
+             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

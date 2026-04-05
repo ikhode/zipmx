@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#FFFFFF" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    
+    <title>ZIPP | Movilidad Inteligente y Mandaditos</title>
+    <meta name="description" content="Zipp es la súper-app de movilidad en Armería. Pide un taxi, mototaxi o solicita mandaditos de forma rápida y segura." />
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="ZIPP | Movilidad Inteligente" />
+    <meta property="og:description" content="Pide tu viaje o mandadito fácil y rápido." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://zipp.app" />
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+    
+    <style>
+      #splash-screen {
+        position: fixed;
+        inset: 0;
+        background: #FFFFFF;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        transition: opacity 0.5s ease-out;
+      }
+      .splash-logo {
+        width: 80px;
+        height: 80px;
+        background: #0A0A0B;
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #00D1FF;
+        font-family: 'Outfit', sans-serif;
+        font-weight: 900;
+        font-size: 24px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        margin-bottom: 24px;
+      }
+      .splash-loader {
+        width: 40px;
+        height: 2px;
+        background: #F1F5F9;
+        border-radius: 2px;
+        overflow: hidden;
+        position: relative;
+      }
+      .splash-loader::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 50%;
+        background: #00D1FF;
+        animation: splash-load 1.5s infinite ease-in-out;
+      }
+      @keyframes splash-load {
+        0% { left: -50%; }
+        100% { left: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="splash-screen">
+      <div class="splash-logo">Z</div>
+      <div class="splash-loader"></div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      window.addEventListener('load', () => {
+        const splash = document.getElementById('splash-screen');
+        if (splash) {
+          setTimeout(() => {
+            splash.style.opacity = '0';
+            setTimeout(() => splash.remove(), 500);
+          }, 800);
+        }
+      });
+    </script>
+  </body>
+</html>

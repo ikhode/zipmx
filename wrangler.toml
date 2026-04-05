@@ -1,0 +1,10 @@
+name = "zipp"
+compatibility_date = "2024-04-03"
+pages_build_output_dir = "dist"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zipp_database"
+database_id = "8a89a445-7646-414d-9aad-4e0d973d0f7b"
+migrations_dir = "./drizzle"
