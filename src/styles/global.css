@@ -208,7 +208,7 @@ button:active {
   color: var(--text);
   box-shadow: var(--shadow-elevated);
   transition: var(--transition-fast);
-  pointer-events: all;
+  pointer-events: auto;
 }
 
 .minimal-menu-btn {
@@ -223,7 +223,7 @@ button:active {
   justify-content: center;
   box-shadow: var(--shadow-elevated);
   transition: var(--transition-fast);
-  pointer-events: all;
+  pointer-events: auto;
 }
 
 /* --- PASSENGER HOME --- */
@@ -1129,7 +1129,7 @@ button:active {
   letter-spacing: 0.05em;
   box-shadow: var(--shadow-premium);
   transition: var(--transition-smooth);
-  pointer-events: all;
+  pointer-events: auto;
   border: 1px solid rgba(255,255,255,0.3);
 }
 
