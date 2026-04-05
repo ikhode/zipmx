@@ -4,7 +4,8 @@ export interface APIUser {
   fullName: string;
   userType: 'passenger' | 'driver';
   phone: string;
-  isVerified?: boolean;
+  verified: boolean;
+  profileImageUrl?: string | null;
 }
 
 export interface APIRide {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import APIClient from './lib/api';
+import APIClient, { APIUser } from './lib/api';
 import { MapView } from './components/MapView';
 import { RideRequestSheet } from './components/RideRequestSheet';
 import { PassengerHome } from './components/PassengerHome';
@@ -41,7 +41,7 @@ const MapSelectionOverlay = React.memo(({
 const MemoizedMapView = React.memo(MapView);
 
 export default function App() {
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<{ user: APIUser } | null>(null);
   const [mode, setMode] = useState<AppMode>('passenger');
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [selectionMode, setSelectionMode] = useState<SelectionType>('none');
@@ -60,13 +60,16 @@ export default function App() {
   // Temp state for map selection
   const [tempLocation, setTempLocation] = useState<[number, number] | null>(null);
   const [tempAddress, setTempAddress] = useState<string>('Buscando dirección...');
+  // Ubicación inicial al entrar al modo selección (NO se actualiza al arrastrar el mapa)
+  const [selectionInitialLocation, setSelectionInitialLocation] = useState<[number, number] | null>(null);
   const [isHeaderHidden, setIsHeaderHidden] = useState(false);
   const [hasActiveRide, setHasActiveRide] = useState(false);
   const [showVerificationSheet, setShowVerificationSheet] = useState<{ type: 'passenger' | 'driver' } | null>(null);
-  const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([]);
+  const [nearbyDrivers, setNearbyDrivers] = useState<{ id: string; position: [number, number]; type: string }[]>([]);
   const [mapBounds, setMapBounds] = useState<[number, number] | null>([19.0148, -104.2403]);
   const [showQuickAuth, setShowQuickAuth] = useState(false);
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
+  const [flyToTrigger, setFlyToTrigger] = useState(0);
 
   const onLoginRequired = (type: 'passenger' | 'driver') => {
     setQuickAuthType(type);
@@ -138,7 +141,14 @@ export default function App() {
       else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
         initial = stops[selectionMode.index]?.position || null;
       }
-      setTempLocation(initial || [19.0148, -104.2403]);
+      const loc: [number, number] = initial || [19.0148, -104.2403];
+      setTempLocation(loc);
+      // Guardar la ubicación inicial para el center del mapa (no se mueve con el drag)
+      setSelectionInitialLocation(loc);
+      // Forzar que el mapa vuele a esta ubicación inicial
+      setFlyToTrigger(prev => prev + 1);
+    } else {
+      setSelectionInitialLocation(null);
     }
   }, [selectionMode]);
 
@@ -180,9 +190,11 @@ export default function App() {
   const stopPositions = useMemo<[number, number][]>(() => stops.map(s => s.position), [stops]);
 
   const mapCenter = useMemo<[number, number]>(() => {
-    if (selectionMode !== 'none' && tempLocation) return tempLocation;
+    // En modo selección usamos la ubicación INICIAL (fijada al entrar),
+    // NO tempLocation que cambia con cada drag del mapa (evita el loop de feedback)
+    if (selectionMode !== 'none' && selectionInitialLocation) return selectionInitialLocation;
     return pickupLocation || [19.0148, -104.2403];
-  }, [selectionMode, tempLocation, pickupLocation]);
+  }, [selectionMode, selectionInitialLocation, pickupLocation]);
 
   // --- Passenger Handlers ---
   const handleStartPlanning = useCallback((_field?: 'pickup' | 'dropoff') => setPlanningStarted(true), []);
@@ -218,6 +230,7 @@ export default function App() {
           selectingLocation={selectionMode !== 'none'}
           nearbyDrivers={nearbyDrivers}
           onLocationSelected={handleLocationSelected}
+          flyToTrigger={flyToTrigger}
         />
       </div>
 

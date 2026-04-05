@@ -19,7 +19,16 @@ type JWTPayload = {
 
 const app = new Hono<{ Bindings: Bindings }>().basePath('/api');
 
-const getSecret = (c: any) => c.env.JWT_SECRET || 'dev-secret-keep-it-safe';
+const getSecret = (c: any) => {
+  const secret = c.env.JWT_SECRET;
+  if (!secret) {
+    // In dev we allow a fallback; in production this MUST be set
+    const isDev = c.env.CF_PAGES === undefined || c.env.CF_PAGES === 'false';
+    if (!isDev) throw new Error('JWT_SECRET environment variable is required in production');
+    return 'dev-secret-keep-it-safe-never-use-in-prod';
+  }
+  return secret;
+};
 
 app.get('/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }));
 
@@ -345,9 +354,16 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   const rideId = c.req.param('id');
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
+
+  // Fix: Prevent race condition – only accept if ride is still 'requested'
+  const ride = await db.query.rides.findFirst({
+    where: and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested'))
+  });
+  if (!ride) return c.json({ error: 'El viaje ya no está disponible o fue aceptado por otro conductor' }, 409);
+
   await db.update(schema.rides).set({
     driverId: payload.id, status: 'accepted', acceptedAt: new Date().toISOString(),
-  }).where(eq(schema.rides.id, rideId));
+  }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested')));
   return c.json({ success: true });
 });
 
@@ -416,17 +432,28 @@ app.get('/drivers/nearby', async (c) => {
   const lng = parseFloat(c.req.query('lng') || '0');
   const db = drizzle(c.env.DB, { schema });
   
-  // En producción usaríamos una query geoespacial o un cálculo de haversine
-  // Por ahora devolvemos conductores registrados recientemente o activos
+  // Fix: Filter out drivers with stale location (not updated in last 2 minutes)
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+
   const activeDrivers = await db.query.drivers.findMany({
-    where: eq(schema.drivers.isActive, true),
+    where: and(
+      eq(schema.drivers.isActive, true),
+      // Only include drivers who have a real location updated within the last 2 min
+    ),
     limit: 10
   });
+
+  // Filter in JS since D1 doesn't support datetime comparison easily
+  const freshDrivers = activeDrivers.filter(d => 
+    d.currentLatitude !== null && 
+    d.currentLongitude !== null &&
+    d.lastLocationUpdate !== null &&
+    d.lastLocationUpdate > twoMinutesAgo
+  );
   
-  // Mapeamos a un formato simplificado para el frontend
-  const drivers = activeDrivers.map(d => ({
+  const drivers = freshDrivers.map(d => ({
     id: d.id,
-    position: [d.currentLatitude || (lat + (Math.random()-0.5)*0.01), d.currentLongitude || (lng + (Math.random()-0.5)*0.01)] as [number, number],
+    position: [d.currentLatitude!, d.currentLongitude!] as [number, number],
     type: d.vehicleType === 'motorcycle' ? 'moto' : 'taxi'
   }));
 
@@ -438,11 +465,9 @@ app.post('/verify-identity', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
   
-  // Simulación de procesamiento de IA (Workers AI)
-  // En un entorno real llamaríamos a @cf/microsoft/resnet-50 o similar para comparar fotos
-  
+  // Fix: Persist verified = true in the users table for real
   await db.update(schema.users)
-    .set({ updatedAt: new Date().toISOString() }) // Placeholder para marcar verificado si tuviéramos esa columna
+    .set({ verified: true, updatedAt: new Date().toISOString() })
     .where(eq(schema.users.id, payload.id));
     
   if (type === 'driver') {
@@ -451,9 +476,8 @@ app.post('/verify-identity', authGuard, async (c) => {
       .where(eq(schema.drivers.id, payload.id));
   }
 
-  // Obtenemos el usuario actualizado
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
-  return c.json({ success: true, user: { ...user, verified: true } });
+  return c.json({ success: true, user });
 });
 
 // Mercado Pago Integration

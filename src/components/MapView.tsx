@@ -11,6 +11,8 @@ interface MapViewProps {
   selectingLocation?: boolean;
   onLocationSelected?: (loc: [number, number]) => void;
   nearbyDrivers?: { id: string, position: [number, number], type: string }[];
+  /** Incrementar este valor fuerza un flyTo inmediato al `center` actual */
+  flyToTrigger?: number;
 }
 
 export function MapView({
@@ -21,7 +23,8 @@ export function MapView({
   stops = [],
   selectingLocation = false,
   onLocationSelected,
-  nearbyDrivers = []
+  nearbyDrivers = [],
+  flyToTrigger = 0,
 }: MapViewProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -30,6 +33,11 @@ export function MapView({
   const routeLineRef = useRef<L.Polyline | null>(null);
   const routeDashRef = useRef<L.Polyline | null>(null);
   const driverMarkersRef = useRef<Map<string, L.Marker>>(new Map());
+  // Siempre mantiene el último center/zoom para el flyToTrigger
+  const centerRef = useRef<[number, number]>(center);
+  const zoomRef = useRef<number>(zoom);
+  centerRef.current = center;
+  zoomRef.current = zoom;
 
   const lastPosRef = useRef<[number, number] | null>(null);
 
@@ -102,8 +110,10 @@ export function MapView({
   }, [nearbyDrivers]);
 
   // --- INTELLIGENT AUTO-FOCUS ---
+  // En modo selección el usuario arrastra el mapa libremente,
+  // por eso deshabilitamos el auto-focus para evitar el loop de feedback.
   useEffect(() => {
-    if (!mapRef.current || !center) return;
+    if (!mapRef.current || !center || selectingLocation) return;
     
     const currCenter = mapRef.current.getCenter();
     const distance = Math.sqrt(
@@ -113,13 +123,10 @@ export function MapView({
 
     // Only fly if the change is significant (likely a programmatic state change)
     if (distance > 0.001 || Math.abs(mapRef.current.getZoom() - zoom) > 0.5) {
-      // Calculate offset for super-app "bottom sheet" center logic
-      // We want the point of interest to be at 35% from the top
       const size = mapRef.current.getSize();
       const targetPoint = L.point(size.x / 2, size.y * 0.35);
       const targetLatLng = mapRef.current.containerPointToLatLng(targetPoint);
       
-      // We adjust the flyTo actual center to put the coords at the visual 35% mark
       const latOffset = center[0] - targetLatLng.lat;
       const lngOffset = center[1] - targetLatLng.lng;
       
@@ -129,7 +136,30 @@ export function MapView({
         { duration: 1.2, easeLinearity: 0.1 }
       );
     }
-  }, [center, zoom]);
+  }, [center, zoom, selectingLocation]);
+
+  // --- FORCED FLY-TO (when entering map selection mode) ---
+  useEffect(() => {
+    if (!mapRef.current || flyToTrigger === 0) return;
+
+    const c = centerRef.current;
+    const z = zoomRef.current;
+
+    const size = mapRef.current.getSize();
+    const targetPoint = L.point(size.x / 2, size.y * 0.35);
+    const targetLatLng = mapRef.current.containerPointToLatLng(targetPoint);
+
+    const latOffset = c[0] - targetLatLng.lat;
+    const lngOffset = c[1] - targetLatLng.lng;
+
+    mapRef.current.flyTo(
+      [c[0] + latOffset, c[1] + lngOffset],
+      z,
+      { duration: 1.0, easeLinearity: 0.1 }
+    );
+  // Solo se dispara cuando flyToTrigger cambia - lee center/zoom por refs
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flyToTrigger]);
 
   useEffect(() => {
     if (!mapRef.current) return;

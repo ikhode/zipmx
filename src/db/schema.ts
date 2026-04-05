@@ -8,6 +8,8 @@ export const users = sqliteTable('users', {
   fullName: text('full_name').notNull(),
   userType: text('user_type', { enum: ['passenger', 'driver'] }).notNull(),
   profileImageUrl: text('profile_image_url'),
+  passwordHash: text('password_hash'),
+  verified: integer('verified', { mode: 'boolean' }).default(false),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 });
@@ -24,6 +26,8 @@ export const drivers = sqliteTable('drivers', {
   isActive: integer('is_active', { mode: 'boolean' }).default(false),
   isBlocked: integer('is_blocked', { mode: 'boolean' }).default(false),
   totalTrips: integer('total_trips').default(0),
+  rating: real('rating').default(5.0),
+  totalEarnings: real('total_earnings').default(0),
   unpaidCommissionAmount: real('unpaid_commission_amount').default(0),
   baseFare: real('base_fare').default(25),
   costPerKm: real('cost_per_km').default(10),
