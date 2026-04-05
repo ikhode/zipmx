@@ -38,12 +38,19 @@ interface RideRequestSheetProps {
   preSelectedVehicle?: string;
   onHeaderVisibilityChange: (hide: boolean) => void;
   onActiveRideChange?: (active: boolean) => void;
+  /** GPS coords of the device, null if not obtained yet */
+  userLocation?: [number, number] | null;
+  /** True while waiting for the first GPS fix */
+  geoLoading?: boolean;
+  /** Callback to fill pickup or dropoff with the device's current location */
+  onUseMyLocation?: (field: 'pickup' | 'dropoff') => Promise<void>;
 }
 
 export function RideRequestSheet(props: RideRequestSheetProps) {
   const { 
     session, initialPlanning, onPlanningClose, onPickupChange, onDropoffChange, pickupLocation, pickupAddress, dropoffLocation, dropoffAddress,
-    stops, onStopsChange, onStartMapSelection, onRideTypeChange, onLoginRequired, preSelectedVehicle, onHeaderVisibilityChange, onActiveRideChange 
+    stops, onStopsChange, onStartMapSelection, onRideTypeChange, onLoginRequired, preSelectedVehicle, onHeaderVisibilityChange, onActiveRideChange,
+    userLocation, geoLoading, onUseMyLocation
   } = props;
 
   const [isPlanning, setIsPlanning] = useState(initialPlanning || false);
@@ -81,6 +88,12 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
 
   const [loading, setLoading] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (focusedInput === 'pickup' && pickupAddress && !searchText) setSearchText(pickupAddress);
+    else if (focusedInput === 'dropoff' && dropoffAddress && !searchText) setSearchText(dropoffAddress);
+    else if (typeof focusedInput === 'object' && stops[focusedInput.index]?.address && !searchText) setSearchText(stops[focusedInput.index].address);
+  }, [pickupAddress, dropoffAddress, stops]);
 
   useEffect(() => {
     if (focusedInput === 'pickup') setSearchText(pickupAddress);
@@ -258,7 +271,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                   ref={pickupInputRef}
                   autoFocus={focusedInput === 'pickup'}
                   className="minimal-input"
-                  placeholder="Inicia en..."
+                  placeholder="Mi ubicación actual"
                   value={focusedInput === 'pickup' ? searchText : pickupAddress}
                   onChange={(e) => focusedInput === 'pickup' && handleSearch(e.target.value)}
                   onFocus={() => setFocusedInput('pickup')}
@@ -282,6 +295,39 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
              <div className="s-text-m">Fijar en el mapa</div>
            </div>
 
+           {/* My current location button */}
+           {(focusedInput === 'pickup' || focusedInput === 'dropoff') && (
+             <div
+               className={`suggestion-item-minimal my-location-item ${!userLocation ? 'disabled' : ''}`}
+               onClick={() => {
+                 if (userLocation && onUseMyLocation) {
+                   onUseMyLocation(focusedInput as 'pickup' | 'dropoff').then(() => {
+                     if (focusedInput === 'pickup') setFocusedInput('dropoff');
+                     else {
+                       setIsPlanning(false);
+                       setStep('selection');
+                     }
+                   });
+                 }
+               }}
+             >
+               <div className="s-icon-m location-pulse-icon">
+                 {geoLoading ? '⏳' : '📍'}
+               </div>
+               <div className="s-text-m">
+                 <div className={`s-main ${geoLoading ? 'skeleton-loader' : ''}`}>
+                   {geoLoading ? 'Obteniendo ubicación...' : 'Mi ubicación actual'}
+                 </div>
+                 {!geoLoading && !userLocation && (
+                   <div className="s-sub" style={{ color: 'var(--text-muted)' }}>Permiso denegado</div>
+                 )}
+               </div>
+               {!geoLoading && userLocation && (
+                 <div className="s-badge-gps">GPS</div>
+               )}
+             </div>
+           )}
+
            {suggestions.map((res, i) => {
              const mainAddr = res.address.road ? 
                (res.address.house_number ? `${res.address.road} ${res.address.house_number}` : res.address.road) : 
@@ -304,7 +350,6 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
 
   return (
     <div className="ride-request-sheet fade-in">
-      <div className="sheet-handle-minimal"></div>
       
       {step === 'service' && (
         <div className="service-minimal-view">

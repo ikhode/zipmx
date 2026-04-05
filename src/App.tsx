@@ -40,6 +40,8 @@ const MapSelectionOverlay = React.memo(({
 
 const MemoizedMapView = React.memo(MapView);
 
+const DEFAULT_LOCATION: [number, number] = [19.0148, -104.2403];
+
 export default function App() {
   const [session, setSession] = useState<{ user: APIUser } | null>(null);
   const [mode, setMode] = useState<AppMode>('passenger');
@@ -49,6 +51,14 @@ export default function App() {
   const [showPromoDetails, setShowPromoDetails] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [currentRideType, setCurrentRideType] = useState<'ride' | 'errand' | 'taxi' | 'mototaxi'>('ride');
+
+  // User's real GPS location
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+  const [geoLoading, setGeoLoading] = useState(true);
+  
+  // Splash Screen State
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
   
   // Locations State
   const [pickupLocation, setPickupLocation] = useState<[number, number] | null>(null);
@@ -66,7 +76,7 @@ export default function App() {
   const [hasActiveRide, setHasActiveRide] = useState(false);
   const [showVerificationSheet, setShowVerificationSheet] = useState<{ type: 'passenger' | 'driver' } | null>(null);
   const [nearbyDrivers, setNearbyDrivers] = useState<{ id: string; position: [number, number]; type: string }[]>([]);
-  const [mapBounds, setMapBounds] = useState<[number, number] | null>([19.0148, -104.2403]);
+  const [mapBounds, setMapBounds] = useState<[number, number] | null>(DEFAULT_LOCATION);
   const [showQuickAuth, setShowQuickAuth] = useState(false);
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
   const [flyToTrigger, setFlyToTrigger] = useState(0);
@@ -77,6 +87,36 @@ export default function App() {
   };
 
   const handleOpenAuth = useCallback(() => onLoginRequired('passenger'), []);
+
+  // --- Geolocation: get user's real position on mount ---
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setGeoLoading(false);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+        setUserLocation(loc);
+        setMapBounds(loc);
+        // Auto-set pickup to current location if not set yet
+        if (!pickupLocation) {
+          setPickupLocation(loc);
+          reverseGeocode(loc[0], loc[1]).then((res) => {
+            if (res) setPickupAddress(formatAddress(res));
+            else setPickupAddress('Mi ubicación actual');
+          });
+        }
+        setGeoLoading(false);
+      },
+      () => {
+        // Permission denied or error — use default
+        setGeoLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     APIClient.getProfile().then(user => setSession(user ? { user } : null));
@@ -105,6 +145,13 @@ export default function App() {
         window.removeEventListener('popstate', handleHashSync);
     };
   }, [handleOpenAuth]);
+
+  // Handle Splash Screen
+  useEffect(() => {
+    const timer1 = setTimeout(() => setSplashFading(true), 2400);
+    const timer2 = setTimeout(() => setShowSplash(false), 2800);
+    return () => { clearTimeout(timer1); clearTimeout(timer2); };
+  }, []);
 
   // Sync state to hash
   useEffect(() => {
@@ -136,12 +183,12 @@ export default function App() {
   useEffect(() => {
     if (selectionMode !== 'none') {
       let initial: [number, number] | null = null;
-      if (selectionMode === 'pickup') initial = pickupLocation;
-      else if (selectionMode === 'dropoff') initial = dropoffLocation;
+      if (selectionMode === 'pickup') initial = pickupLocation || userLocation;
+      else if (selectionMode === 'dropoff') initial = dropoffLocation || userLocation;
       else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
-        initial = stops[selectionMode.index]?.position || null;
+        initial = stops[selectionMode.index]?.position || userLocation || null;
       }
-      const loc: [number, number] = initial || [19.0148, -104.2403];
+      const loc: [number, number] = initial || userLocation || DEFAULT_LOCATION;
       setTempLocation(loc);
       // Guardar la ubicación inicial para el center del mapa (no se mueve con el drag)
       setSelectionInitialLocation(loc);
@@ -193,8 +240,8 @@ export default function App() {
     // En modo selección usamos la ubicación INICIAL (fijada al entrar),
     // NO tempLocation que cambia con cada drag del mapa (evita el loop de feedback)
     if (selectionMode !== 'none' && selectionInitialLocation) return selectionInitialLocation;
-    return pickupLocation || [19.0148, -104.2403];
-  }, [selectionMode, selectionInitialLocation, pickupLocation]);
+    return pickupLocation || userLocation || DEFAULT_LOCATION;
+  }, [selectionMode, selectionInitialLocation, pickupLocation, userLocation]);
 
   // --- Passenger Handlers ---
   const handleStartPlanning = useCallback((_field?: 'pickup' | 'dropoff') => setPlanningStarted(true), []);
@@ -217,6 +264,21 @@ export default function App() {
     if (loc) setDropoffLocation(loc);
     if (addr) setDropoffAddress(addr);
   }, []);
+
+  // Expose userLocation so child components can use it
+  const handleUseMyLocation = useCallback(async (field: 'pickup' | 'dropoff') => {
+    const loc = userLocation;
+    if (!loc) return;
+    const res = await reverseGeocode(loc[0], loc[1]);
+    const addr = res ? formatAddress(res) : 'Mi ubicación actual';
+    if (field === 'pickup') {
+      setPickupLocation(loc);
+      setPickupAddress(addr);
+    } else {
+      setDropoffLocation(loc);
+      setDropoffAddress(addr);
+    }
+  }, [userLocation]);
 
   return (
     <div className={`app-container ${mode === 'passenger' && !pickupLocation && !dropoffLocation && selectionMode === 'none' ? 'is-home' : ''}`}>
@@ -272,7 +334,7 @@ export default function App() {
        {selectionMode === 'none' && (
         <div className={`scroll-content experience-${mode}`}>
           {mode === 'passenger' ? (
-            !pickupLocation && !dropoffLocation && !planningStarted ? (
+            !planningStarted && !hasActiveRide ? (
               <div className="home-content" style={{ pointerEvents: 'auto' }}>
                 <PassengerHome 
                   dropoffAddress={dropoffAddress}
@@ -283,7 +345,10 @@ export default function App() {
                 <div className="home-map-preview-placeholder"></div>
               </div>
             ) : (
+              <>
+                <div className="scroll-spacer"></div>
                 <div className="scroll-card">
+                  <div className="sheet-handle-minimal"></div>
                   {!session && !hasActiveRide && (
                     <div className="guest-cta-minimal fade-in">
                       <span className="pill-badge">Explora Zipp</span>
@@ -310,8 +375,12 @@ export default function App() {
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
                     onHeaderVisibilityChange={setIsHeaderHidden}
                     onActiveRideChange={setHasActiveRide}
+                    userLocation={userLocation}
+                    geoLoading={geoLoading}
+                    onUseMyLocation={handleUseMyLocation}
                   />
                 </div>
+              </>
             )
           ) : (
              <div className="driver-focused-view">
@@ -447,6 +516,16 @@ export default function App() {
           />
         )}
       </BottomSheet>
+
+      {/* Splash Screen */}
+      {showSplash && (
+        <div className={`app-splash-screen ${splashFading ? 'fade-out' : ''}`}>
+           <div className="splash-logo-container">
+              <div className="splash-logo-text">Zipp</div>
+              <div className="splash-loader-bar"><div className="splash-loader-progress"></div></div>
+           </div>
+        </div>
+      )}
     </div>
   );
 }

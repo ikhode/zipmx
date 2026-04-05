@@ -19,15 +19,12 @@ type JWTPayload = {
 
 const app = new Hono<{ Bindings: Bindings }>().basePath('/api');
 
-const getSecret = (c: any) => {
-  const secret = c.env.JWT_SECRET;
-  if (!secret) {
-    // In dev we allow a fallback; in production this MUST be set
-    const isDev = c.env.CF_PAGES === undefined || c.env.CF_PAGES === 'false';
-    if (!isDev) throw new Error('JWT_SECRET environment variable is required in production');
-    return 'dev-secret-keep-it-safe-never-use-in-prod';
-  }
-  return secret;
+const getSecret = (c: any): string => {
+  const secret = c.env?.JWT_SECRET;
+  if (secret) return secret;
+  // Fallback for local dev — wrangler pages dev does not inject Pages secrets
+  console.warn('[getSecret] JWT_SECRET not set — using dev fallback. Set it via: wrangler pages secret put JWT_SECRET');
+  return 'dev-secret-keep-it-safe-never-use-in-prod';
 };
 
 app.get('/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }));
@@ -167,10 +164,11 @@ app.get('/routing/route', async (c) => {
 
 // Auth
 app.post('/auth/signup', async (c) => {
-  const { email, phone, fullName, userType } = await c.req.json();
-  const db = drizzle(c.env.DB, { schema });
-  const secret = getSecret(c);
   try {
+    const { email, phone, fullName, userType } = await c.req.json();
+    const db = drizzle(c.env.DB, { schema });
+    const secret = getSecret(c);
+
     const newUser = await db.insert(schema.users).values({
       email, phone, fullName, userType,
     }).returning();
@@ -179,7 +177,16 @@ app.post('/auth/signup', async (c) => {
     const token = await sign(payload, secret, 'HS256');
     return c.json({ user, token });
   } catch (error: any) {
-    return c.json({ error: error.message }, 400);
+    console.error('[/auth/signup] Error:', error?.message, error?.stack?.substring(0, 300));
+    // Distinguish DB constraint errors (duplicate email/phone) from server errors
+    const msg: string = error?.message || 'Unknown error';
+    if (msg.includes('UNIQUE constraint') || msg.includes('unique')) {
+      return c.json({ error: 'Este correo o teléfono ya está registrado.' }, 409);
+    }
+    if (msg.includes('JWT_SECRET')) {
+      return c.json({ error: 'Server misconfiguration: JWT_SECRET not set.' }, 500);
+    }
+    return c.json({ error: msg }, 500);
   }
 });
 
