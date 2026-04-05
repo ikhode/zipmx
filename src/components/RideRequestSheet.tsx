@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import APIClient, { APIRide } from '../lib/api';
 import { searchAddresses, formatAddress, GeocodingResult } from '../lib/geocoding';
+import { useToast } from './ToastProvider';
+import { triggerHaptic } from '../lib/haptics';
 
 // --- Constants ---
 const VEHICLE_RATES: Record<string, { base: number, km: number, min: number }> = { 
@@ -53,6 +55,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     userLocation, geoLoading, onUseMyLocation
   } = props;
 
+  const { showToast } = useToast();
   const [isPlanning, setIsPlanning] = useState(initialPlanning || false);
   const [focusedInput, setFocusedInput] = useState<'pickup' | 'dropoff' | { type: 'stop', index: number }>('pickup');
 
@@ -78,11 +81,12 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     if (preSelectedVehicle) setVehicleType(preSelectedVehicle);
   }, [preSelectedVehicle]);
 
-  // Auto-transition to selection when both locations are set (e.g. via Map Selection)
+  // Auto-transition to selection when both locations are set
   useEffect(() => {
     if (pickupLocation && dropoffLocation && isPlanning && step !== 'tracking') {
       setIsPlanning(false);
       setStep('selection');
+      triggerHaptic('success');
     }
   }, [pickupLocation, dropoffLocation, isPlanning, step]);
 
@@ -147,10 +151,8 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   const selectSuggestion = (res: GeocodingResult) => {
     let addr = formatAddress(res);
     const coords: [number, number] = [res.lat, res.lon];
+    triggerHaptic('light');
 
-    // House Number Persistence Logic
-    // If the suggestion lacks a house number but the user's typed search has one,
-    // we "sticky" it into the final address so it's not lost.
     if (!res.address.house_number) {
       const match = searchText.match(/\d+$/);
       if (match && !addr.includes(match[0])) {
@@ -166,6 +168,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       onDropoffChange(coords, addr);
       setIsPlanning(false);
       setStep('selection');
+      triggerHaptic('success');
     } else if (typeof focusedInput === 'object') {
       const newStops = [...stops];
       newStops[focusedInput.index] = { position: coords, address: addr };
@@ -177,7 +180,10 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   };
 
   const requestRide = async () => {
-    if (!pickupLocation || !dropoffLocation) return;
+    if (!pickupLocation || !dropoffLocation) {
+        showToast('Debes seleccionar origen y destino', 'error');
+        return;
+    }
     
     if (!session) {
       onLoginRequired();
@@ -185,6 +191,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     }
     
     setLoading(true);
+    triggerHaptic('medium');
     try {
       const dist = calculateDistance(pickupLocation[0], pickupLocation[1], dropoffLocation[0], dropoffLocation[1]);
       const duration = Math.ceil(dist * 2.5) + 2;
@@ -202,10 +209,21 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
         items: '',
       });
       setStep('tracking');
+      showToast('Buscando conductor...', 'success');
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const cancelRide = async (id: string) => {
+    triggerHaptic('medium');
+    try {
+        await APIClient.cancelRide(id);
+        showToast('Viaje cancelado', 'info');
+    } catch (err: any) {
+        showToast(err.message, 'error');
     }
   };
 
@@ -227,8 +245,8 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
             {activeRide.status === 'requested' && <div className="mini-pulse"></div>}
           </div>
 
-          <div className="driver-card-minimal">
-             <div className="driver-avatar-mini">
+          <div className="driver-card-minimal stagger-in">
+             <div className="driver-avatar-mini skeleton-circle">
                {activeRide.status === 'requested' ? '⏳' : '👤'}
              </div>
              <div className="driver-info-mini">
@@ -236,7 +254,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                <div className="vehicle-info-mini">Toyota Corolla • ZIP123</div>
              </div>
              <div className="driver-action-mini">
-                <button className="icon-btn-mini">📞</button>
+                <button className="icon-btn-mini interactive-scale" onClick={() => triggerHaptic('light')}>📞</button>
              </div>
           </div>
           
@@ -245,7 +263,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
              <div className="meta-row"><span>Pago</span> <strong>Efectivo</strong></div>
           </div>
 
-          <button className="minimal-cancel-btn" onClick={() => APIClient.cancelRide(activeRide.id)}>Cancelar</button>
+          <button className="minimal-cancel-btn interactive-scale" onClick={() => cancelRide(activeRide.id)}>Cancelar</button>
         </div>
       </div>
     );
@@ -255,7 +273,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     return (
       <div className="ride-planner full-screen fade-in">
         <div className="planner-header-minimal">
-           <button className="back-btn-m" onClick={() => { setIsPlanning(false); onPlanningClose?.(); }}>←</button>
+           <button className="back-btn-m interactive-scale" onClick={() => { setIsPlanning(false); onPlanningClose?.(); triggerHaptic('light'); }}>←</button>
            <h2 className="planner-title-m">¿A dónde vamos?</h2>
         </div>
 
@@ -274,7 +292,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                   placeholder="Mi ubicación actual"
                   value={focusedInput === 'pickup' ? searchText : pickupAddress}
                   onChange={(e) => focusedInput === 'pickup' && handleSearch(e.target.value)}
-                  onFocus={() => setFocusedInput('pickup')}
+                  onFocus={() => { setFocusedInput('pickup'); triggerHaptic('light'); }}
                 />
                 <div className="input-divider-mini"></div>
                 <input 
@@ -283,14 +301,14 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                   placeholder="¿A dónde vas?"
                   value={focusedInput === 'dropoff' ? searchText : dropoffAddress}
                   onChange={(e) => focusedInput === 'dropoff' && handleSearch(e.target.value)}
-                  onFocus={() => setFocusedInput('dropoff')}
+                  onFocus={() => { setFocusedInput('dropoff'); triggerHaptic('light'); }}
                 />
               </div>
            </div>
         </div>
 
-        <div className="suggestions-list-minimal scrollable">
-           <div className="suggestion-item-minimal" onClick={() => onStartMapSelection(focusedInput)}>
+        <div className="suggestions-list-minimal scrollable stagger-in">
+           <div className="suggestion-item-minimal interactive-scale" onClick={() => { onStartMapSelection(focusedInput); triggerHaptic('medium'); }}>
              <div className="s-icon-m">🗺️</div>
              <div className="s-text-m">Fijar en el mapa</div>
            </div>
@@ -334,7 +352,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                res.display_name.split(',')[0];
              
              return (
-               <div key={i} className="suggestion-item-minimal" onClick={() => selectSuggestion(res)}>
+               <div key={i} className="suggestion-item-minimal interactive-scale" onClick={() => selectSuggestion(res)}>
                  <div className="s-icon-m">📍</div>
                  <div className="s-text-m">
                    <div className="s-main">{mainAddr}</div>
@@ -352,19 +370,19 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     <div className="ride-request-sheet fade-in">
       
       {step === 'service' && (
-        <div className="service-minimal-view">
+        <div className="service-minimal-view stagger-in">
           <h2 className="minimal-title-large">¿A dónde vamos?</h2>
-          <div className="minimal-address-card" onClick={() => { setIsPlanning(true); setFocusedInput('pickup'); }}>
+          <div className="minimal-address-card interactive-scale" onClick={() => { setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('light'); }}>
              <div className="addr-row-mini"><span className="dot-m origin"></span> {pickupAddress || 'Actual'}</div>
              <div className="addr-row-mini"><span className="dot-m dest"></span> {dropoffAddress || '¿A dónde vas?'}</div>
           </div>
           
           <div className="minimal-services-row">
-             <button className="service-button-minimal" onClick={() => { onRideTypeChange('ride'); setIsPlanning(true); setFocusedInput('pickup'); }}>
+             <button className="service-button-minimal interactive-scale" onClick={() => { onRideTypeChange('ride'); setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('medium'); }}>
                 <span className="icon-m">🚗</span>
                 <span className="label-m">Viaje</span>
              </button>
-             <button className="service-button-minimal" onClick={() => { onRideTypeChange('errand'); setIsPlanning(true); setFocusedInput('pickup'); }}>
+             <button className="service-button-minimal interactive-scale" onClick={() => { onRideTypeChange('errand'); setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('medium'); }}>
                 <span className="icon-m">📦</span>
                 <span className="label-m">Envío</span>
              </button>
@@ -373,41 +391,53 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       )}
 
       {step === 'selection' && (
-        <div className="vehicle-selection-minimal">
+        <div className="vehicle-selection-minimal fade-in">
           <div className="selection-header-minimal">
-            <button className="back-btn-minimal" onClick={() => setStep('service')}>←</button>
-            <div className="selection-path-mini" onClick={() => setIsPlanning(true)}>
+            <button className="back-btn-minimal interactive-scale" onClick={() => { setStep('service'); triggerHaptic('light'); }}>←</button>
+            <div className="selection-path-mini" onClick={() => { setIsPlanning(true); triggerHaptic('light'); }}>
                {dropoffAddress.split(',')[0]}
             </div>
           </div>
 
-          <div className="vehicle-list-minimal scrollable">
-            {[
-              { id: 'car', name: 'ZippX', icon: '🚗', cap: 4 },
-              { id: 'taxi', name: 'Taxi', icon: '🚕', cap: 4 },
-              { id: 'motorcycle', name: 'Moto', icon: '🏍️', cap: 1 },
-              { id: 'rickshaw', name: 'Mototaxi', icon: '🛺', cap: 3 }
-            ].map(v => {
-              const dist = pickupLocation && dropoffLocation ? calculateDistance(pickupLocation[0], pickupLocation[1], dropoffLocation[0], dropoffLocation[1]) : 1;
-              const rate = VEHICLE_RATES[v.id] || VEHICLE_RATES['car'];
-              const price = Math.ceil(rate.base + (dist * rate.km) + (dist * 2.5 * rate.min));
-              
-              return (
-                <div key={v.id} className={`vehicle-item-minimal ${vehicleType === v.id ? 'active' : ''}`} onClick={() => setVehicleType(v.id)}>
-                   <div className="v-icon-m">{v.icon}</div>
-                   <div className="v-meta-m">
-                      <div className="v-name-m">{v.name} • {v.cap} pers.</div>
-                      <div className="v-eta-m">4 min</div>
-                   </div>
-                   <div className="v-price-m">${price}</div>
-                </div>
-              );
-            })}
+          <div className="vehicle-list-minimal scrollable stagger-in">
+            {loading ? (
+                Array(4).fill(0).map((_, i) => (
+                    <div key={i} className="vehicle-item-minimal">
+                        <div className="v-icon-m skeleton-circle"></div>
+                        <div className="v-meta-m">
+                            <div className="skeleton skeleton-text" style={{ width: '60%' }}></div>
+                            <div className="skeleton skeleton-text" style={{ width: '40%' }}></div>
+                        </div>
+                    </div>
+                ))
+            ) : (
+                [
+                { id: 'car', name: 'ZippX', icon: '🚗', cap: 4 },
+                { id: 'taxi', name: 'Taxi', icon: '🚕', cap: 4 },
+                { id: 'motorcycle', name: 'Moto', icon: '🏍️', cap: 1 },
+                { id: 'rickshaw', name: 'Mototaxi', icon: '🛺', cap: 3 }
+                ].map(v => {
+                const dist = pickupLocation && dropoffLocation ? calculateDistance(pickupLocation[0], pickupLocation[1], dropoffLocation[0], dropoffLocation[1]) : 1;
+                const rate = VEHICLE_RATES[v.id] || VEHICLE_RATES['car'];
+                const price = Math.ceil(rate.base + (dist * rate.km) + (dist * 2.5 * rate.min));
+                
+                return (
+                    <div key={v.id} className={`vehicle-item-minimal interactive-scale ${vehicleType === v.id ? 'active' : ''}`} onClick={() => { setVehicleType(v.id); triggerHaptic('light'); }}>
+                    <div className="v-icon-m">{v.icon}</div>
+                    <div className="v-meta-m">
+                        <div className="v-name-m">{v.name} • {v.cap} pers.</div>
+                        <div className="v-eta-m">4 min</div>
+                    </div>
+                    <div className="v-price-m">${price}</div>
+                    </div>
+                );
+                })
+            )}
           </div>
 
           <div className="selection-footer-minimal">
-             <div className="payment-mini">💵 Efectivo ▾</div>
-             <button className="confirm-button-minimal" onClick={requestRide} disabled={loading}>
+             <div className="payment-mini interactive-scale" onClick={() => triggerHaptic('light')}>💵 Efectivo ▾</div>
+             <button className="confirm-button-minimal interactive-scale" onClick={requestRide} disabled={loading}>
                {loading ? '...' : `Pedir ${vehicleType}`}
              </button>
           </div>

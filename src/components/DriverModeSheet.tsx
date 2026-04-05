@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import APIClient, { APIRide } from '../lib/api';
+import { useToast } from './ToastProvider';
+import { triggerHaptic } from '../lib/haptics';
 
 interface DriverModeSheetProps {
   session: any;
@@ -30,16 +32,16 @@ const RideCard = React.memo(({ ride, onAccept, onArrive, onStart, onComplete }: 
       </div>
       <div className="ride-actions-mini">
         {ride.status === 'requested' && onAccept && (
-          <button className="confirm-button-minimal" onClick={() => onAccept(ride.id)}>ACEPTAR</button>
+          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onAccept(ride.id); }}>ACEPTAR</button>
         )}
         {ride.status === 'accepted' && onArrive && (
-          <button className="confirm-button-minimal" onClick={onArrive}>LLEGUÉ</button>
+          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onArrive(); }}>LLEGUÉ</button>
         )}
         {ride.status === 'arrived' && onStart && (
-          <button className="confirm-button-minimal" onClick={onStart}>INICIAR</button>
+          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onStart(); }}>INICIAR</button>
         )}
         {ride.status === 'in_progress' && onComplete && (
-          <button className="confirm-button-minimal" onClick={onComplete} style={{ background: '#10B981', color: 'white' }}>FINALIZAR</button>
+          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('success'); onComplete(); }} style={{ background: '#10B981', color: 'white' }}>FINALIZAR</button>
         )}
       </div>
     </div>
@@ -47,19 +49,21 @@ const RideCard = React.memo(({ ride, onAccept, onArrive, onStart, onComplete }: 
 });
 
 export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }: DriverModeSheetProps) {
+  const { showToast } = useToast();
   const [rides, setRides] = useState<APIRide[]>([]);
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
 
   useEffect(() => {
     onActiveRideChange?.(!!activeRide);
   }, [activeRide, onActiveRideChange]);
+  
   const [isOnline, setIsOnline] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
   const [loading, setLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
-    if (!session) return; // Guests can't fetch real data
+    if (!session) return;
     try {
       const [ridesData, activeRideData] = await Promise.all([
         APIClient.getAvailableRides(),
@@ -102,13 +106,15 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
       return;
     }
     setLoading(true);
+    triggerHaptic('medium');
     try {
       const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
       await APIClient.setupDriver(mappedType as any);
       setNeedsSetup(false);
       setIsOnline(true);
-    } catch (error) {
-      alert('Error en configuración');
+      showToast('¡Configuración completada!', 'success');
+    } catch (error: any) {
+      showToast(error.message || 'Error en configuración', 'error');
     } finally {
       setLoading(false);
     }
@@ -116,29 +122,38 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
 
   const handleUpdateStatus = useCallback(async (status: 'accepted' | 'arrived' | 'in_progress' | 'completed') => {
     if (!activeRide) return;
+    triggerHaptic('light');
     try {
       await APIClient.updateRideStatus(activeRide.id, status);
+      if (status === 'completed') {
+          showToast('Viaje finalizado con éxito', 'success');
+          triggerHaptic('success');
+      }
       fetchData();
-    } catch (err) {
-      alert('Error al actualizar estado');
+    } catch (err: any) {
+      showToast(err.message || 'Error al actualizar estado', 'error');
     }
-  }, [activeRide, fetchData]);
+  }, [activeRide, fetchData, showToast]);
 
   const handleAcceptRide = useCallback(async (id: string) => {
+    triggerHaptic('success');
     try {
       await APIClient.acceptRide(id);
+      showToast('Viaje aceptado', 'success');
       fetchData();
-    } catch (error) {
-      alert('Error al aceptar viaje');
+    } catch (error: any) {
+      showToast(error.message || 'Error al aceptar viaje', 'error');
     }
-  }, [fetchData]);
+  }, [fetchData, showToast]);
 
   const toggleOnline = () => {
     if (!session) {
       onLoginRequired();
       return;
     }
+    triggerHaptic('medium');
     setIsOnline(!isOnline);
+    showToast(isOnline ? 'Te has desconectado' : 'Estás en línea', isOnline ? 'info' : 'success');
   };
 
   const vehicleOptions = useMemo(() => [
@@ -152,7 +167,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
 
   if (needsSetup) {
     return (
-      <div className="driver-setup-minimal fade-in">
+      <div className="driver-setup-minimal fade-in stagger-in">
         <h2 className="minimal-title-large">Comienza a ganar</h2>
         <p className="minimal-desc-sm">Selecciona tu vehículo para empezar</p>
         <div className="minimal-vehicle-grid">
@@ -160,8 +175,8 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
             <button 
                 key={v.type} 
                 data-testid={`vehicle-btn-${v.type}`}
-                className={`minimal-vehicle-btn ${vehicleType === v.type ? 'active' : ''}`} 
-                onClick={() => setVehicleType(v.type as any)}
+                className={`minimal-vehicle-btn interactive-scale ${vehicleType === v.type ? 'active' : ''}`} 
+                onClick={() => { triggerHaptic('light'); setVehicleType(v.type as any); }}
             >
               <span className="v-icon">{v.icon}</span>
               <span className="v-label">{v.label}</span>
@@ -173,7 +188,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
             🔒 Modo Invitado: Se requiere iniciar sesión para activarte
           </div>
         )}
-        <button className="confirm-button-minimal" data-testid="driver-setup-btn" onClick={setupDriver} disabled={loading}>
+        <button className="confirm-button-minimal interactive-scale" data-testid="driver-setup-btn" onClick={setupDriver} disabled={loading}>
           {loading ? '...' : session ? 'Empezar' : 'Identificarme y Empezar'}
         </button>
       </div>
@@ -181,10 +196,10 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
   }
 
   return (
-    <div className="driver-mode-sheet premium-card-anim">
+    <div className="driver-mode-sheet premium-card-anim stagger-in">
       <div className="driver-status-bar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '40px' }}>
           <button 
-              className={`status-toggle-pill ${isOnline ? 'online' : 'offline'}`} 
+              className={`status-toggle-pill interactive-scale ${isOnline ? 'online' : 'offline'}`} 
               onClick={toggleOnline}
           >
             {isOnline ? 'ESTÁS EN LÍNEA 🟢' : 'DESCONECTADO 🔴'}
@@ -209,7 +224,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
           ) : rides.length === 0 ? (
             <div className="empty-info" style={{ textAlign: 'center', color: '#6B7280', padding: '40px 0' }}>Buscando solicitudes...</div>
           ) : (
-            <div className="rides-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="rides-list stagger-in" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {rides.map(ride => (
                 <RideCard key={ride.id} ride={ride} onAccept={handleAcceptRide} />
               ))}

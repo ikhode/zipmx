@@ -22,7 +22,8 @@
   --shadow-elevated: 0 12px 32px -8px rgba(0, 0, 0, 0.08), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
   --transition-fast: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-smooth: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-spring: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --transition-spring: all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --transition-bounce: all 0.5s cubic-bezier(0.68, -0.6, 0.32, 1.6);
 }
 
 /* --- SPLASH SCREEN --- */
@@ -78,6 +79,7 @@
   animation: moveBar 1.5s infinite ease-in-out;
 }
 
+/* --- ANIMATIONS & SKELETONS --- */
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
@@ -87,9 +89,29 @@
   background: linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 50%, #F3F4F6 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
-  border-radius: 4px;
+  border-radius: 8px;
   color: transparent !important;
   user-select: none;
+}
+
+@keyframes staggered-fade-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stagger-in > * {
+  animation: staggered-fade-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.stagger-in > *:nth-child(1) { animation-delay: 0.1s; }
+.stagger-in > *:nth-child(2) { animation-delay: 0.15s; }
+.stagger-in > *:nth-child(3) { animation-delay: 0.2s; }
+.stagger-in > *:nth-child(4) { animation-delay: 0.25s; }
+
+/* Scale effect for touch/click */
+.interactive-scale:active {
+  transform: scale(0.96) !important;
+}
 }
 
 /* --- RESET & BASE --- */
@@ -774,7 +796,7 @@ button:active {
 /* --- KINETIC PIN --- */
 .center-pin-wrapper {
   position: absolute;
-  top: 35%; /* Same as targeted geocoding point */
+  top: 35%; /* Fixed target point */
   left: 50%;
   transform: translate(-50%, -100%);
   z-index: 100;
@@ -782,12 +804,20 @@ button:active {
   flex-direction: column;
   align-items: center;
   pointer-events: none;
+<<<<<<< HEAD
   animation: dropIn 0.5s var(--transition-spring);
 }
 
 @keyframes dropIn {
   0% { transform: translate(-50%, -150%) scale(0.8); opacity: 0; }
   100% { transform: translate(-50%, -100%) scale(1); opacity: 1; }
+=======
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.center-pin-wrapper.is-moving {
+  transform: translate(-50%, -120%);
+>>>>>>> a317dac (feat: app polish - haptics, animations, skeletons, and toasts)
 }
 
 .pin-head {
@@ -796,6 +826,7 @@ button:active {
   background: black;
   border: 4px solid white;
   border-radius: 50%;
+<<<<<<< HEAD
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
@@ -803,15 +834,47 @@ button:active {
   width: 2px;
   height: 28px;
   background: linear-gradient(to bottom, black, rgba(0,0,0,0.1));
+=======
+  box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+  transition: transform 0.2s ease;
+}
+
+.center-pin-wrapper.is-moving .pin-head {
+  transform: scale(1.1);
+}
+
+.pin-stem {
+  width: 3px;
+  height: 30px;
+  background: linear-gradient(to bottom, black, transparent);
+  transform-origin: top;
+  transition: height 0.2s ease;
+}
+
+.center-pin-wrapper.is-moving .pin-stem {
+  height: 45px;
+>>>>>>> a317dac (feat: app polish - haptics, animations, skeletons, and toasts)
 }
 
 .pin-shadow-dot {
   width: 6px;
   height: 3px;
+<<<<<<< HEAD
   background: rgba(0,0,0,0.25);
   border-radius: 50%;
   margin-top: 2px;
   filter: blur(1px);
+=======
+  background: rgba(0,0,0,0.15);
+  border-radius: 50%;
+  filter: blur(1px);
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.center-pin-wrapper.is-moving .pin-shadow-dot {
+  transform: scale(0.6);
+  opacity: 0.5;
+>>>>>>> a317dac (feat: app polish - haptics, animations, skeletons, and toasts)
 }
 
 /* --- BOTTOM SHEETS --- */

@@ -12,6 +12,8 @@ import { VerificationSheet } from './components/VerificationSheet';
 import { StatusBanner } from './components/StatusBanner';
 import { QuickAuthSplash } from './components/QuickAuthSplash';
 import { reverseGeocode, formatAddress } from './lib/geocoding';
+import { useToast } from './components/ToastProvider';
+import { triggerHaptic } from './lib/haptics';
 
 type AppMode = 'passenger' | 'driver';
 type SelectionType = 'none' | 'pickup' | 'dropoff' | { type: 'stop', index: number };
@@ -25,12 +27,12 @@ const MapSelectionOverlay = React.memo(({
 }) => {
   return (
     <div className="map-selection-minimal">
-      <button className="minimal-back-btn" onClick={onCancel}>←</button>
+      <button className="minimal-back-btn interactive-scale" onClick={() => { triggerHaptic('light'); onCancel(); }}>←</button>
       <div className="center-pin-minimal"></div>
       
       <div className="selection-sheet-minimal">
         <div className="selection-address-mini">{tempAddress}</div>
-        <button className="confirm-button-minimal" onClick={onConfirm}>
+        <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('success'); onConfirm(); }}>
           Confirmar ubicación
         </button>
       </div>
@@ -43,6 +45,7 @@ const MemoizedMapView = React.memo(MapView);
 const DEFAULT_LOCATION: [number, number] = [19.0148, -104.2403];
 
 export default function App() {
+  const { showToast } = useToast();
   const [session, setSession] = useState<{ user: APIUser } | null>(null);
   const [mode, setMode] = useState<AppMode>('passenger');
   const [showModeSelector, setShowModeSelector] = useState(false);
@@ -84,6 +87,7 @@ export default function App() {
   const onLoginRequired = (type: 'passenger' | 'driver') => {
     setQuickAuthType(type);
     setShowQuickAuth(true);
+    triggerHaptic('medium');
   };
 
   const handleOpenAuth = useCallback(() => onLoginRequired('passenger'), []);
@@ -244,13 +248,23 @@ export default function App() {
   }, [selectionMode, selectionInitialLocation, pickupLocation, userLocation]);
 
   // --- Passenger Handlers ---
-  const handleStartPlanning = useCallback((_field?: 'pickup' | 'dropoff') => setPlanningStarted(true), []);
+  const handleStartPlanning = useCallback((_field?: 'pickup' | 'dropoff') => {
+    triggerHaptic('light');
+    setPlanningStarted(true);
+  }, []);
   const handleSelectService = useCallback((type: 'ride' | 'errand' | 'taxi' | 'mototaxi') => {
+    triggerHaptic('medium');
     setCurrentRideType(type);
     setPlanningStarted(true);
   }, []);
-  const handlePromoClick = useCallback(() => setShowPromoDetails(true), []);
-  const handleAccountMenuOpen = useCallback(() => setShowAccountMenu(true), []);
+  const handlePromoClick = useCallback(() => {
+    triggerHaptic('light');
+    setShowPromoDetails(true);
+  }, []);
+  const handleAccountMenuOpen = useCallback(() => {
+    triggerHaptic('medium');
+    setShowAccountMenu(true);
+  }, []);
   const handleModeSelectorClose = useCallback(() => setShowModeSelector(false), []);
   const handleAccountMenuClose = useCallback(() => setShowAccountMenu(false), []);
   const handlePromoClose = useCallback(() => setShowPromoDetails(false), []);
@@ -299,24 +313,24 @@ export default function App() {
       {/* Dynamic Header: Visible only when NOT in Selection Mode */}
       {selectionMode === 'none' && (
         <div className={`app-header ${isHeaderHidden ? 'hidden' : ''} mode-${mode}`}>
-          <div className="passenger-top-actions">
+          <div className="passenger-top-actions stagger-in">
             {!session ? (
               <button 
-                className="minimal-auth-btn" 
-                onClick={() => setShowModeSelector(true)}
+                className="minimal-auth-btn interactive-scale" 
+                onClick={() => { triggerHaptic('medium'); setShowModeSelector(true); }}
               >
                 Identifícate
               </button>
             ) : (
               <button 
-                className="minimal-pill-btn" 
-                onClick={() => setShowModeSelector(true)}
+                className="minimal-pill-btn interactive-scale" 
+                onClick={() => { triggerHaptic('medium'); setShowModeSelector(true); }}
               >
                 {mode === 'passenger' ? 'Pasajero' : 'Conductor'}
               </button>
             )}
             
-            <button className="minimal-menu-btn" onClick={handleAccountMenuOpen}>
+            <button className="minimal-menu-btn interactive-scale" onClick={handleAccountMenuOpen}>
                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
             </button>
           </div>
@@ -353,7 +367,7 @@ export default function App() {
                     <div className="guest-cta-minimal fade-in">
                       <span className="pill-badge">Explora Zipp</span>
                       <p>Identifícate para proteger tu viaje y ver precios exactos</p>
-                      <button onClick={() => setShowModeSelector(true)}>INICIAR SESIÓN</button>
+                      <button className="interactive-scale" onClick={() => setShowModeSelector(true)}>INICIAR SESIÓN</button>
                     </div>
                   )}
                   
@@ -369,7 +383,7 @@ export default function App() {
                     onPickupChange={handlePickupChange}
                     onDropoffChange={handleDropoffChange}
                     onStopsChange={setStops}
-                    onStartMapSelection={(mode: any) => setSelectionMode(mode)}
+                    onStartMapSelection={(mode: any) => { triggerHaptic('medium'); setSelectionMode(mode); }}
                     onRideTypeChange={setCurrentRideType}
                     onLoginRequired={() => onLoginRequired('passenger')}
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
@@ -427,9 +441,11 @@ export default function App() {
           onClose={handleAccountMenuClose} 
           onSwitchMode={() => { 
             if (hasActiveRide) {
-               alert("No puedes cambiar de modo con un viaje activo");
+               showToast("No puedes cambiar de modo con un viaje activo", "error");
                return;
             }
+            
+            triggerHaptic('medium');
             
             // Direct auto-switch logic
             if (mode === 'passenger') {
@@ -457,20 +473,21 @@ export default function App() {
         snapPoints={[0.4]}
         initialSnap={0}
       >
-        <div className="mode-selector">
+        <div className="mode-selector stagger-in">
           <h3 className="mode-selector-title">Selecciona tu modo</h3>
           <div className="mode-options">
             <button
-              className={`mode-option ${mode === 'passenger' ? 'active' : ''}`}
-              onClick={() => { setMode('passenger'); setShowModeSelector(false); }}
+              className={`mode-option interactive-scale ${mode === 'passenger' ? 'active' : ''}`}
+              onClick={() => { triggerHaptic('medium'); setMode('passenger'); setShowModeSelector(false); }}
             >
               <div className="mode-badge"></div>
               <span className="mode-icon">🚗</span>
               <span className="mode-label">Pasajero</span>
             </button>
             <button
-              className={`mode-option ${mode === 'driver' ? 'active' : ''}`}
+              className={`mode-option interactive-scale ${mode === 'driver' ? 'active' : ''}`}
               onClick={() => { 
+                triggerHaptic('medium');
                 if (session && !session.user.verified) {
                    setShowModeSelector(false);
                    setShowVerificationSheet({ type: 'driver' });
@@ -490,7 +507,7 @@ export default function App() {
             {!session ? (
               <Auth />
             ) : (
-              <button className="cancel-link-btn" onClick={() => { APIClient.logout(); window.location.reload(); }}>
+              <button className="cancel-link-btn interactive-scale" onClick={() => { triggerHaptic('medium'); APIClient.logout(); window.location.reload(); }}>
                 Cerrar Sesión
               </button>
             )}
@@ -512,6 +529,7 @@ export default function App() {
                setSession({ user });
                setShowVerificationSheet(null);
                if (showVerificationSheet.type === 'driver') setMode('driver');
+               triggerHaptic('success');
             }}
           />
         )}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { triggerHaptic } from '../lib/haptics';
 
 interface PassengerHomeProps {
   dropoffAddress: string;
@@ -13,12 +14,20 @@ export const PassengerHome: React.FC<PassengerHomeProps> = ({
   onSelectService,
   onPromoClick
 }) => {
+  const handleAction = (cb: () => void, haptic: any = 'light') => {
+    triggerHaptic(haptic);
+    cb();
+  };
+
   return (
-    <div className="passenger-home fade-in">
+    <div className="passenger-home fade-in stagger-in">
       <h1 className="section-subtitle" style={{ fontSize: '34px', marginBottom: '32px', color: 'var(--text)' }}>¿A dónde vamos?</h1>
       
       {/* Search Bar - High Fidelity */}
-      <div className="minimal-search-box" onClick={() => onStartPlanning('dropoff')}>
+      <div 
+        className="minimal-search-box interactive-scale" 
+        onClick={() => handleAction(() => onStartPlanning('dropoff'), 'medium')}
+      >
         <div className="search-input-group">
           <div className="dot-minimal dest" style={{ backgroundColor: 'black', borderRadius: '2px' }}></div>
           <div className="search-text-minimal">
@@ -29,11 +38,11 @@ export const PassengerHome: React.FC<PassengerHomeProps> = ({
 
       {/* Quick Filters Row - Refined */}
       <div className="quick-access-row">
-        <div className="quick-pill" onClick={() => onStartPlanning('pickup')}>
+        <div className="quick-pill interactive-scale" onClick={() => handleAction(() => onStartPlanning('pickup'))}>
            <span className="pill-icon">📍</span>
            <span>Actual</span>
         </div>
-        <div className="quick-pill">
+        <div className="quick-pill interactive-scale" onClick={() => triggerHaptic('light')}>
            <span className="pill-icon">🕒</span>
            <span>Ahora</span>
         </div>
@@ -47,7 +56,11 @@ export const PassengerHome: React.FC<PassengerHomeProps> = ({
             { id: 'mototaxi', name: 'Zipp Moto', icon: '🏍️', gradient: 'moto-minimal' },
             { id: 'errand', name: 'Zipp Envío', icon: '📦', gradient: 'errand-minimal' }
           ].map(s => (
-            <div key={s.id} className="minimal-card" onClick={() => onSelectService(s.id as any)}>
+            <div 
+              key={s.id} 
+              className="minimal-card interactive-scale" 
+              onClick={() => handleAction(() => onSelectService(s.id as any), 'medium')}
+            >
               <div className={`minimal-icon-box ${s.gradient}`}>
                 <span className="emoji-icon" style={{ fontSize: '38px' }}>{s.icon}</span>
               </div>
@@ -58,7 +71,11 @@ export const PassengerHome: React.FC<PassengerHomeProps> = ({
       </div>
 
       {/* Promo - Floating style */}
-      <div className="minimal-promo" onClick={onPromoClick} style={{ marginTop: '32px' }}>
+      <div 
+        className="minimal-promo interactive-scale" 
+        onClick={() => handleAction(onPromoClick, 'medium')} 
+        style={{ marginTop: '32px' }}
+      >
         <div className="promo-tag-mini">Zipp PRO</div>
         <div className="promo-text-mini">Desbloquea viajes con un 40% de descuento</div>
         <div className="promo-arrow-mini">›</div>

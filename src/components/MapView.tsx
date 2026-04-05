@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -26,6 +26,7 @@ export function MapView({
   nearbyDrivers = [],
   flyToTrigger = 0,
 }: MapViewProps) {
+  const [isDragging, setIsDragging] = useState(false);
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const pickupMarkerRef = useRef<L.Marker | null>(null);
@@ -55,7 +56,10 @@ export function MapView({
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+    map.on('movestart', () => setIsDragging(true));
+    
     map.on('moveend', () => {
+      setIsDragging(false);
       const size = map.getSize();
       const targetPoint = L.point(size.x / 2, size.y * 0.35);
       const c = map.containerPointToLatLng(targetPoint);
@@ -278,7 +282,7 @@ export function MapView({
     <div className="map-wrapper-inner">
       <div ref={containerRef} className="map-container" />
       {selectingLocation && (
-        <div className="center-pin-wrapper">
+        <div className={`center-pin-wrapper ${isDragging ? 'is-moving' : ''}`}>
           <div className="pin-head"></div>
           <div className="pin-stem"></div>
           <div className="pin-shadow-dot"></div>
