@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import APIClient from '../lib/api';
+import { useToast } from './ToastProvider';
 
 interface QuickAuthSplashProps {
   userType: 'passenger' | 'driver';
@@ -8,6 +9,7 @@ interface QuickAuthSplashProps {
 }
 
 export function QuickAuthSplash({ userType, onClose, onShowFullAuth }: QuickAuthSplashProps) {
+  const { showToast } = useToast();
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,11 +23,12 @@ export function QuickAuthSplash({ userType, onClose, onShowFullAuth }: QuickAuth
       await APIClient.quickSignup(fullName, phone, userType);
       window.location.reload();
     } catch (error: any) {
-      alert(error.message || 'Error en registro');
+      showToast(error.message || 'Error en registro', 'error');
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="quick-auth-splash fade-in">

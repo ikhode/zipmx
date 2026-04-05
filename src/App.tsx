@@ -187,13 +187,23 @@ export default function App() {
   useEffect(() => {
     if (selectionMode !== 'none') {
       let initial: [number, number] | null = null;
-      if (selectionMode === 'pickup') initial = pickupLocation || userLocation;
-      else if (selectionMode === 'dropoff') initial = dropoffLocation || userLocation;
-      else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
-        initial = stops[selectionMode.index]?.position || userLocation || null;
+      let initialAddr = 'Buscando dirección...';
+
+      if (selectionMode === 'pickup') {
+        initial = pickupLocation || userLocation;
+        initialAddr = pickupAddress || 'Mi ubicación';
+      } else if (selectionMode === 'dropoff') {
+        // Mejor UX: si vamos a elegir destino y no hay uno, empezar en el origen
+        initial = dropoffLocation || pickupLocation || userLocation;
+        initialAddr = dropoffAddress || pickupAddress || 'Ubicación actual';
+      } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
+        initial = stops[selectionMode.index]?.position || pickupLocation || userLocation;
+        initialAddr = stops[selectionMode.index]?.address || 'Nueva parada';
       }
+
       const loc: [number, number] = initial || userLocation || DEFAULT_LOCATION;
       setTempLocation(loc);
+      setTempAddress(initialAddr);
       // Guardar la ubicación inicial para el center del mapa (no se mueve con el drag)
       setSelectionInitialLocation(loc);
       // Forzar que el mapa vuele a esta ubicación inicial
@@ -201,7 +211,7 @@ export default function App() {
     } else {
       setSelectionInitialLocation(null);
     }
-  }, [selectionMode]);
+  }, [selectionMode, pickupLocation, dropoffLocation, userLocation, pickupAddress, dropoffAddress, stops]);
 
   // Debounced geocoding for temp selection
   useEffect(() => {

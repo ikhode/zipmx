@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import APIClient, { APIRide } from '../lib/api';
 import { DriverCommissionTracker } from './DriverCommissionTracker';
 import { DriverFareSettings } from './DriverFareSettings';
+import { useToast } from './ToastProvider';
+
 
 interface DriverDashboardProps {
   driverId: string;
@@ -43,7 +45,9 @@ const RideCard = React.memo(({ ride, onAccept, onStart, onComplete, isBlocked }:
 });
 
 export function DriverDashboard({ driverId }: DriverDashboardProps) {
+  const { showToast } = useToast();
   const [driver, setDriver] = useState<any | null>(null);
+
   const [availableRides, setAvailableRides] = useState<APIRide[]>([]);
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const [isOnline, setIsOnline] = useState(false);
@@ -79,7 +83,7 @@ export function DriverDashboard({ driverId }: DriverDashboardProps) {
   const toggleOnlineStatus = async () => {
     if (!driver) return;
     if (driver.isBlocked) {
-      alert('Cuenta bloqueada. Favor de liquidar comisiones.');
+      showToast('Cuenta bloqueada. Favor de liquidar comisiones.', 'error');
       return;
     }
     setIsOnline(!isOnline);
@@ -92,7 +96,7 @@ export function DriverDashboard({ driverId }: DriverDashboardProps) {
       await APIClient.acceptRide(rideId);
       fetchData();
     } catch (error: any) {
-      alert(error.message);
+      showToast(error.message, 'error');
     }
   };
 
@@ -105,7 +109,7 @@ export function DriverDashboard({ driverId }: DriverDashboardProps) {
   const handleCompleteRide = async () => {
     if (!activeRide) return;
     await APIClient.updateRideStatus(activeRide.id, 'completed');
-    alert('¡Viaje completado!');
+    showToast('¡Viaje completado!', 'success');
     fetchData();
   };
 

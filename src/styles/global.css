@@ -112,7 +112,6 @@
 .interactive-scale:active {
   transform: scale(0.96) !important;
 }
-}
 
 /* --- RESET & BASE --- */
 * {
@@ -585,6 +584,27 @@ button:active {
   margin: 4px 0;
 }
 
+.suggestions-list-minimal {
+  flex: 1;
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+  padding-bottom: 40px;
+}
+
+/* Premium Scrollbar */
+.suggestions-list-minimal::-webkit-scrollbar {
+  width: 5px;
+}
+
+.suggestions-list-minimal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.suggestions-list-minimal::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+}
+
 .suggestion-item-minimal {
   display: flex;
   align-items: center;
@@ -804,20 +824,17 @@ button:active {
   flex-direction: column;
   align-items: center;
   pointer-events: none;
-<<<<<<< HEAD
   animation: dropIn 0.5s var(--transition-spring);
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 @keyframes dropIn {
   0% { transform: translate(-50%, -150%) scale(0.8); opacity: 0; }
   100% { transform: translate(-50%, -100%) scale(1); opacity: 1; }
-=======
-  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .center-pin-wrapper.is-moving {
   transform: translate(-50%, -120%);
->>>>>>> a317dac (feat: app polish - haptics, animations, skeletons, and toasts)
 }
 
 .pin-head {
@@ -826,15 +843,6 @@ button:active {
   background: black;
   border: 4px solid white;
   border-radius: 50%;
-<<<<<<< HEAD
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-}
-
-.pin-stem {
-  width: 2px;
-  height: 28px;
-  background: linear-gradient(to bottom, black, rgba(0,0,0,0.1));
-=======
   box-shadow: 0 8px 16px rgba(0,0,0,0.2);
   transition: transform 0.2s ease;
 }
@@ -853,18 +861,11 @@ button:active {
 
 .center-pin-wrapper.is-moving .pin-stem {
   height: 45px;
->>>>>>> a317dac (feat: app polish - haptics, animations, skeletons, and toasts)
 }
 
 .pin-shadow-dot {
   width: 6px;
   height: 3px;
-<<<<<<< HEAD
-  background: rgba(0,0,0,0.25);
-  border-radius: 50%;
-  margin-top: 2px;
-  filter: blur(1px);
-=======
   background: rgba(0,0,0,0.15);
   border-radius: 50%;
   filter: blur(1px);
@@ -874,7 +875,6 @@ button:active {
 .center-pin-wrapper.is-moving .pin-shadow-dot {
   transform: scale(0.6);
   opacity: 0.5;
->>>>>>> a317dac (feat: app polish - haptics, animations, skeletons, and toasts)
 }
 
 /* --- BOTTOM SHEETS --- */
@@ -1140,7 +1140,7 @@ button:active {
   display: flex;
   flex-direction: column;
   padding: 20px;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .driver-setup-minimal {

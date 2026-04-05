@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import APIClient from '../lib/api';
+import { useToast } from './ToastProvider';
+
 
 interface Location {
   latitude: number;
@@ -13,7 +15,9 @@ interface RideRequestProps {
 }
 
 export function RideRequest({ onRideCreated }: Omit<RideRequestProps, 'userId'>) {
+  const { showToast } = useToast();
   const [rideType, setRideType] = useState<'ride' | 'errand'>('ride');
+
   const [pickup, setPickup] = useState<Location>({
     latitude: 0,
     longitude: 0,
@@ -51,12 +55,12 @@ export function RideRequest({ onRideCreated }: Omit<RideRequestProps, 'userId'>)
 
   async function requestRide() {
     if (!pickup.address || !dropoff.address) {
-      alert('Por favor ingresa las direcciones de origen y destino');
+      showToast('Por favor ingresa las direcciones de origen y destino', 'warning');
       return;
     }
 
     if (rideType === 'errand' && !errandDescription) {
-      alert('Por favor describe el mandadito que necesitas');
+      showToast('Por favor describe el mandadito que necesitas', 'warning');
       return;
     }
 
@@ -84,7 +88,7 @@ export function RideRequest({ onRideCreated }: Omit<RideRequestProps, 'userId'>)
         items: errandItems,
       });
 
-      alert(`${rideType === 'ride' ? 'Viaje' : 'Mandadito'} solicitado exitosamente!`);
+      showToast(`${rideType === 'ride' ? 'Viaje' : 'Mandadito'} solicitado exitosamente!`, 'success');
 
       if (onRideCreated && data) {
         onRideCreated(data.id);
@@ -96,7 +100,7 @@ export function RideRequest({ onRideCreated }: Omit<RideRequestProps, 'userId'>)
       setErrandItems('');
     } catch (error) {
       console.error('Error requesting ride:', error);
-      alert('Error al solicitar el servicio. Por favor intenta de nuevo.');
+      showToast('Error al solicitar el servicio. Por favor intenta de nuevo.', 'error');
     } finally {
       setLoading(false);
     }
@@ -114,7 +118,7 @@ export function RideRequest({ onRideCreated }: Omit<RideRequestProps, 'userId'>)
         },
         (error) => {
           console.error('Error getting location:', error);
-          alert('No se pudo obtener tu ubicación. Por favor ingrésala manualmente.');
+          showToast('No se pudo obtener tu ubicación. Por favor ingrésala manualmente.', 'warning');
         }
       );
     }

@@ -1,39 +1,43 @@
 import { useState } from 'react';
 import APIClient from '../lib/api';
+import { useToast } from './ToastProvider';
+
 
 export function Auth() {
-  const [loading, setLoading] = useState(false);
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
+    const { showToast } = useToast();
+    const [loading, setLoading] = useState(false);
+    const [isSignUp, setIsSignUp] = useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [fullName, setFullName] = useState('');
+    const [phone, setPhone] = useState('');
 
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault();
+    async function handleAuth(e: React.FormEvent) {
+      e.preventDefault();
 
-    try {
-      setLoading(true);
+      try {
+        setLoading(true);
 
-      if (isSignUp) {
-        await APIClient.signup({
-          email,
-          phone,
-          fullName,
-          userType: 'passenger',
-          password,
-        });
-        alert('Cuenta creada exitosamente!');
-      } else {
-        await APIClient.login(email, password);
+        if (isSignUp) {
+          await APIClient.signup({
+            email,
+            phone,
+            fullName,
+            userType: 'passenger',
+            password,
+          });
+          showToast('¡Cuenta creada exitosamente!', 'success');
+        } else {
+          await APIClient.login(email, password);
+        }
+        window.location.reload();
+      } catch (error: any) {
+        showToast(error.message || 'Error en la autenticación', 'error');
+      } finally {
+        setLoading(false);
       }
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || 'Error en la autenticación');
-    } finally {
-      setLoading(false);
     }
-  }
+
 
   return (
     <div className="auth-container">

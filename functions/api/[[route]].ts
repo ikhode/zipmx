@@ -169,26 +169,51 @@ app.post('/auth/signup', async (c) => {
     const db = drizzle(c.env.DB, { schema });
     const secret = getSecret(c);
 
+    // Validation
+    if (!email || !phone || !fullName || !userType) {
+      return c.json({ error: 'Todos los campos son obligatorios.' }, 400);
+    }
+
     const newUser = await db.insert(schema.users).values({
       email, phone, fullName, userType,
     }).returning();
+    
+    if (!newUser || newUser.length === 0) {
+      throw new Error('No se pudo crear el usuario en la base de datos.');
+    }
+
     const user = newUser[0];
     const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
     const token = await sign(payload, secret, 'HS256');
     return c.json({ user, token });
   } catch (error: any) {
-    console.error('[/auth/signup] Error:', error?.message, error?.stack?.substring(0, 300));
-    // Distinguish DB constraint errors (duplicate email/phone) from server errors
-    const msg: string = error?.message || 'Unknown error';
-    if (msg.includes('UNIQUE constraint') || msg.includes('unique')) {
+    const errorMsg = error?.message || 'Error desconocido';
+    console.error('[/auth/signup] Critical Registration Error:', {
+      message: errorMsg,
+      stack: error?.stack?.substring(0, 500),
+      cause: error?.cause
+    });
+
+    // Check for common SQLite/D1 errors and return localized messages
+    const lowerMsg = errorMsg.toLowerCase();
+    if (lowerMsg.includes('unique constraint') || lowerMsg.includes('unique')) {
+      if (lowerMsg.includes('email')) {
+        return c.json({ error: 'Este correo ya está registrado.' }, 409);
+      }
+      if (lowerMsg.includes('phone')) {
+        return c.json({ error: 'Este número de teléfono ya está registrado.' }, 409);
+      }
       return c.json({ error: 'Este correo o teléfono ya está registrado.' }, 409);
     }
-    if (msg.includes('JWT_SECRET')) {
-      return c.json({ error: 'Server misconfiguration: JWT_SECRET not set.' }, 500);
+
+    if (lowerMsg.includes('jwt_secret')) {
+      return c.json({ error: 'Error de configuración del servidor (JWT).' }, 500);
     }
-    return c.json({ error: msg }, 500);
+
+    return c.json({ error: `Error en el registro: ${errorMsg}` }, 500);
   }
 });
+
 
 app.post('/auth/login', async (c) => {
   const { email } = await c.req.json();

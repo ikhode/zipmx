@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import APIClient from '../lib/api';
 import { createPaymentPreference, saveCommissionPayment } from '../lib/mercadopago';
+import { useToast } from './ToastProvider';
 
 interface DriverCommissionTrackerProps {
   driverId: string;
 }
 
 export function DriverCommissionTracker({ driverId }: DriverCommissionTrackerProps) {
+  const { showToast } = useToast();
   const [driver, setDriver] = useState<any | null>(null);
   const [payments, setPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,11 +60,12 @@ export function DriverCommissionTracker({ driverId }: DriverCommissionTrackerPro
       await loadPayments();
     } catch (error) {
       console.error('Error processing payment:', error);
-      alert('Error al procesar el pago. Por favor intenta de nuevo.');
+      showToast('Error al procesar el pago. Por favor intenta de nuevo.', 'error');
     } finally {
       setProcessingPayment(false);
     }
   }
+
 
   if (loading) {
     return <div className="loading">Cargando información...</div>;

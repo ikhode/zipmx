@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import APIClient from '../lib/api';
+import { useToast } from './ToastProvider';
 
 interface VerificationSheetProps {
   type: 'passenger' | 'driver';
@@ -8,6 +9,7 @@ interface VerificationSheetProps {
 }
 
 export function VerificationSheet({ type, onComplete }: VerificationSheetProps) {
+  const { showToast } = useToast();
   const [step, setStep] = useState<'info' | 'camera' | 'document' | 'processing'>('info');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
@@ -23,10 +25,11 @@ export function VerificationSheet({ type, onComplete }: VerificationSheetProps) 
         videoRef.current.srcObject = stream;
       }
     } catch (err) {
-      alert('Se requiere permiso de cámara para la verificación de identidad.');
+      showToast('Se requiere permiso de cámara para la verificación de identidad.', 'warning');
       setStep('info');
     }
   };
+
 
   const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
@@ -65,13 +68,14 @@ export function VerificationSheet({ type, onComplete }: VerificationSheetProps) 
       if (result.success) {
         onComplete(result.user);
       } else {
-        alert('La validación de identidad falló: ' + result.message);
+        showToast('La validación de identidad falló: ' + result.message, 'error');
         setStep('info');
       }
     } catch (error) {
-      alert('Error en el proceso de verificación');
+      showToast('Error en el proceso de verificación', 'error');
       setStep('info');
     } finally {
+
       setIsSubmitting(false);
     }
   };
