@@ -376,12 +376,13 @@ export default function App() {
         initialSnap={0}
       >
         <div className="mode-selector">
-          <h3 style={{ marginBottom: '20px', fontSize: '20px', fontWeight: 800 }}>Selecciona tu modo</h3>
+          <h3 className="mode-selector-title">Selecciona tu modo</h3>
           <div className="mode-options">
             <button
               className={`mode-option ${mode === 'passenger' ? 'active' : ''}`}
               onClick={() => { setMode('passenger'); setShowModeSelector(false); }}
             >
+              <div className="mode-badge"></div>
               <span className="mode-icon">🚗</span>
               <span className="mode-label">Pasajero</span>
             </button>
@@ -397,18 +398,17 @@ export default function App() {
                 setShowModeSelector(false); 
               }}
             >
+              <div className="mode-badge"></div>
               <span className="mode-icon">👨‍✈️</span>
               <span className="mode-label">Conductor</span>
             </button>
           </div>
           
-          <div className="auth-footer-minimal" style={{ marginTop: '24px', borderTop: '1px solid #F1F5F9', paddingTop: '20px' }}>
+          <div className="auth-footer-minimal">
             {!session ? (
-              <div style={{ pointerEvents: 'auto' }}>
-                <Auth />
-              </div>
+              <Auth />
             ) : (
-              <button className="cancel-link-btn" style={{ width: '100%' }} onClick={() => { APIClient.logout(); window.location.reload(); }}>
+              <button className="cancel-link-btn" onClick={() => { APIClient.logout(); window.location.reload(); }}>
                 Cerrar Sesión
               </button>
             )}

@@ -15,19 +15,19 @@ export const PassengerHome: React.FC<PassengerHomeProps> = ({
 }) => {
   return (
     <div className="passenger-home fade-in">
-      {/* Search Bar - Minimalist Uber Style */}
-      <div className="minimal-search-box">
-        <div className="search-input-group" onClick={() => onStartPlanning('dropoff')}>
-          <div className="search-indicator">
-            <div className="dot-minimal dest"></div>
-          </div>
+      <h1 className="section-subtitle" style={{ fontSize: '34px', marginBottom: '32px', color: 'var(--text)' }}>¿A dónde vamos?</h1>
+      
+      {/* Search Bar - High Fidelity */}
+      <div className="minimal-search-box" onClick={() => onStartPlanning('dropoff')}>
+        <div className="search-input-group">
+          <div className="dot-minimal dest" style={{ backgroundColor: 'black', borderRadius: '2px' }}></div>
           <div className="search-text-minimal">
-            {dropoffAddress || '¿A dónde vamos?'}
+            {dropoffAddress || 'Calle, Número, Colonia...'}
           </div>
         </div>
       </div>
 
-      {/* Quick Filters Row */}
+      {/* Quick Filters Row - Refined */}
       <div className="quick-access-row">
         <div className="quick-pill" onClick={() => onStartPlanning('pickup')}>
            <span className="pill-icon">📍</span>
@@ -37,36 +37,31 @@ export const PassengerHome: React.FC<PassengerHomeProps> = ({
            <span className="pill-icon">🕒</span>
            <span>Ahora</span>
         </div>
-        <div className="quick-pill">
-           <span className="pill-icon">👤</span>
-           <span>Para mí</span>
-        </div>
       </div>
 
-      {/* Promo - Subtle & Elegant */}
-      <div className="minimal-promo" onClick={onPromoClick}>
-        <div className="promo-tag-mini">40% OFF</div>
-        <div className="promo-text-mini">Ahorra en tu próximo viaje zipp</div>
-        <div className="promo-arrow-mini">›</div>
-      </div>
-
-      {/* Suggestions - Breathable Grid */}
+      {/* Suggestions - Premium Grid */}
       <div className="suggestions-minimal">
-        <h3 className="section-subtitle">Sugerencias</h3>
         <div className="minimal-grid">
           {[
-            { id: 'taxi', name: 'Taxi', icon: '🚕', gradient: 'taxi-minimal' },
-            { id: 'mototaxi', name: 'Moto', icon: '🏍️', gradient: 'moto-minimal' },
-            { id: 'errand', name: 'Envío', icon: '📦', gradient: 'errand-minimal' }
+            { id: 'ride', name: 'Viaje', icon: '🚗', gradient: 'taxi-minimal' },
+            { id: 'mototaxi', name: 'Zipp Moto', icon: '🏍️', gradient: 'moto-minimal' },
+            { id: 'errand', name: 'Zipp Envío', icon: '📦', gradient: 'errand-minimal' }
           ].map(s => (
             <div key={s.id} className="minimal-card" onClick={() => onSelectService(s.id as any)}>
               <div className={`minimal-icon-box ${s.gradient}`}>
-                <span className="emoji-icon">{s.icon}</span>
+                <span className="emoji-icon" style={{ fontSize: '38px' }}>{s.icon}</span>
               </div>
               <span className="minimal-label">{s.name}</span>
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Promo - Floating style */}
+      <div className="minimal-promo" onClick={onPromoClick} style={{ marginTop: '32px' }}>
+        <div className="promo-tag-mini">Zipp PRO</div>
+        <div className="promo-text-mini">Desbloquea viajes con un 40% de descuento</div>
+        <div className="promo-arrow-mini">›</div>
       </div>
     </div>
   );
