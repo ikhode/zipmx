@@ -47,7 +47,8 @@ app.get('/geocoding/address', async (c) => {
 
   try {
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.pages.dev)' }
+      headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
+
     });
     
     if (response.status === 429) return c.json({ error: 'Rate limit exceeded' }, 429);
@@ -82,7 +83,8 @@ app.get('/geocoding/search', async (c) => {
 
   try {
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.pages.dev)' }
+      headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
+
     });
     
     if (!response.ok) return c.json([]);
@@ -111,7 +113,8 @@ app.get('/geocoding/reverse', async (c) => {
 
   try {
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.pages.dev)' }
+      headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
+
     });
 
     if (response.status === 429) return c.json({ error: 'Rate limit exceeded' }, 429);
@@ -131,36 +134,46 @@ app.get('/geocoding/reverse', async (c) => {
 // Routing Proxy (OSRM) to avoid CORS
 app.get('/routing/route', async (c) => {
   const coords = c.req.query('coords'); // format: "lon1,lat1;lon2,lat2"
-  if (!coords) return c.json({ error: 'Coordinates are required' }, 400);
-
-  // Use a more stable community-hosted OSRM server than the demo project-osrm.org
-  const url = `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?overview=full&geometries=geojson`;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout to avoid worker kill
-
-  try {
-    const response = await fetch(url, {
-        headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.pages.dev)' },
-        signal: controller.signal
-    });
-    
-    if (!response.ok) {
-        const errText = await response.text();
-        return c.json({ error: `Routing Error (${response.status}): ${errText.substring(0, 100)}` }, response.status as any);
+    if (!coords) return c.json({ error: 'Coordinates are required' }, 400);
+  
+    // Use a more stable community-hosted OSRM server
+    const osrmInstances = [
+      `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+      `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
+    ];
+  
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000); // Increased to 6s for resilience
+  
+    try {
+      for (const url of osrmInstances) {
+        try {
+          if (controller.signal.aborted) break;
+          
+          const response = await fetch(url, {
+              headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' },
+              signal: controller.signal
+          });
+          
+          if (!response.ok) continue;
+          
+          const data = await response.json();
+          return c.json(data);
+        } catch (error: any) {
+          if (error.name === 'AbortError') {
+              return c.json({ error: 'Routing request timed out (6s)' }, 504);
+          }
+          console.warn(`OSRM instance failed: ${url}`, error.message);
+          continue;
+        }
+      }
+  
+      return c.json({ error: 'All routing instances failed or request timed out.' }, 503);
+    } finally {
+      clearTimeout(timeoutId);
     }
-    
-    const data = await response.json();
-    return c.json(data);
-  } catch (error: any) {
-    if (error.name === 'AbortError') {
-        return c.json({ error: 'Routing request timed out (4s)' }, 504);
-    }
-    return c.json({ error: `Worker proxy error: ${error.message}` }, 500);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-});
+  });
+
 
 // Auth
 app.post('/auth/signup', async (c) => {
@@ -464,33 +477,40 @@ app.get('/drivers/nearby', async (c) => {
   const lng = parseFloat(c.req.query('lng') || '0');
   const db = drizzle(c.env.DB, { schema });
   
-  // Fix: Filter out drivers with stale location (not updated in last 2 minutes)
-  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  try {
+    if (!c.env.DB) {
+      console.error('[NearbyDrivers] DB binding missing');
+      return c.json({ drivers: [] });
+    }
 
-  const activeDrivers = await db.query.drivers.findMany({
-    where: and(
-      eq(schema.drivers.isActive, true),
-      // Only include drivers who have a real location updated within the last 2 min
-    ),
-    limit: 10
-  });
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
 
-  // Filter in JS since D1 doesn't support datetime comparison easily
-  const freshDrivers = activeDrivers.filter(d => 
-    d.currentLatitude !== null && 
-    d.currentLongitude !== null &&
-    d.lastLocationUpdate !== null &&
-    d.lastLocationUpdate > twoMinutesAgo
-  );
-  
-  const drivers = freshDrivers.map(d => ({
-    id: d.id,
-    position: [d.currentLatitude!, d.currentLongitude!] as [number, number],
-    type: d.vehicleType === 'motorcycle' ? 'moto' : 'taxi'
-  }));
+    const activeDrivers = await db.query.drivers.findMany({
+      where: eq(schema.drivers.isActive, true),
+      limit: 10
+    });
 
-  return c.json({ drivers });
+    // Filter in JS since D1 doesn't support datetime comparison easily
+    const freshDrivers = activeDrivers.filter(d => 
+      d.currentLatitude !== null && 
+      d.currentLongitude !== null &&
+      d.lastLocationUpdate !== null &&
+      d.lastLocationUpdate > twoMinutesAgo
+    );
+    
+    const drivers = freshDrivers.map(d => ({
+      id: d.id,
+      position: [d.currentLatitude!, d.currentLongitude!] as [number, number],
+      type: d.vehicleType === 'motorcycle' ? 'moto' : 'taxi'
+    }));
+
+    return c.json({ drivers });
+  } catch (error: any) {
+    console.error('[NearbyDrivers] Critical Error:', error.message);
+    return c.json({ drivers: [] });
+  }
 });
+
 
 app.post('/verify-identity', authGuard, async (c) => {
   const { type } = await c.req.json();

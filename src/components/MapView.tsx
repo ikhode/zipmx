@@ -33,6 +33,7 @@ export function MapView({
   const dropoffMarkerRef = useRef<L.Marker | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
   const routeDashRef = useRef<L.Polyline | null>(null);
+  const driverLayerRef = useRef<L.LayerGroup | null>(null);
   const driverMarkersRef = useRef<Map<string, L.Marker>>(new Map());
   // Siempre mantiene el último center/zoom para el flyToTrigger
   const centerRef = useRef<[number, number]>(center);
@@ -41,6 +42,10 @@ export function MapView({
   zoomRef.current = zoom;
 
   const lastPosRef = useRef<[number, number] | null>(null);
+  const routeAbortControllerRef = useRef<AbortController | null>(null);
+  const routeRetryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -74,44 +79,59 @@ export function MapView({
       }
     });
 
+    driverLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     return () => {
+      if (routeRetryTimeoutRef.current) {
+        clearTimeout(routeRetryTimeoutRef.current);
+      }
       map.remove();
+
       mapRef.current = null;
+      driverLayerRef.current = null;
     };
   }, []);
 
+
   // Update nearby driver markers
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || !driverLayerRef.current) return;
 
     const currentIds = new Set(nearbyDrivers.map(d => d.id));
 
+    // Clear ghost markers
     driverMarkersRef.current.forEach((marker, id) => {
       if (!currentIds.has(id)) {
-        marker.remove();
+        driverLayerRef.current?.removeLayer(marker);
         driverMarkersRef.current.delete(id);
       }
     });
 
+    // Update or add markers
     nearbyDrivers.forEach(driver => {
       let marker = driverMarkersRef.current.get(driver.id);
       if (!marker) {
         marker = L.marker(driver.position, {
           icon: L.icon({
-            iconUrl: driver.type === 'moto' ? 'https://zipp.inteligent.software/icons/mototaxi_3d_icon_1775323676892.png' : 'https://zipp.inteligent.software/icons/taxi_3d_icon_1775323650355.png',
+            iconUrl: driver.type === 'moto' 
+              ? 'https://zipp.inteligent.software/icons/mototaxi_3d_icon_1775323676892.png' 
+              : 'https://zipp.inteligent.software/icons/taxi_3d_icon_1775323650355.png',
             iconSize: [40, 40],
             iconAnchor: [20, 20]
           }),
           zIndexOffset: 100
-        }).addTo(mapRef.current!);
+        }).addTo(driverLayerRef.current!);
         driverMarkersRef.current.set(driver.id, marker);
       } else {
-        marker.setLatLng(driver.position);
+        const currentLatLng = marker.getLatLng();
+        if (currentLatLng.lat !== driver.position[0] || currentLatLng.lng !== driver.position[1]) {
+          marker.setLatLng(driver.position);
+        }
       }
     });
   }, [nearbyDrivers]);
+
 
   // --- INTELLIGENT AUTO-FOCUS ---
   // En modo selección el usuario arrastra el mapa libremente,
@@ -165,25 +185,24 @@ export function MapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyToTrigger]);
 
+  // Marker Lifecycle: Update pickup and dropoff markers
   useEffect(() => {
     if (!mapRef.current) return;
-    
-    mapRef.current.invalidateSize();
 
-    if (pickupMarkerRef.current) mapRef.current.removeLayer(pickupMarkerRef.current);
-    if (dropoffMarkerRef.current) mapRef.current.removeLayer(dropoffMarkerRef.current);
-    if (routeLineRef.current) mapRef.current.removeLayer(routeLineRef.current);
-    if (routeDashRef.current) mapRef.current.removeLayer(routeDashRef.current);
-    
-    pickupMarkerRef.current = null;
-    dropoffMarkerRef.current = null;
-    routeLineRef.current = null;
-    routeDashRef.current = null;
+    if (pickupMarkerRef.current) {
+      pickupMarkerRef.current.remove();
+      pickupMarkerRef.current = null;
+    }
+    if (dropoffMarkerRef.current) {
+      dropoffMarkerRef.current.remove();
+      dropoffMarkerRef.current = null;
+    }
 
     if (pickupLocation) {
       pickupMarkerRef.current = L.marker(pickupLocation, {
         icon: L.divIcon({
           className: 'pickup-marker-v2',
+          isMarker: true,
           html: `<div class="marker-container-v2">
                   <div class="pulse-container">
                     <div class="pulse-ring"></div>
@@ -196,7 +215,7 @@ export function MapView({
                  </div>`,
           iconSize: [40, 40],
           iconAnchor: [20, 20],
-        }),
+        } as any),
         zIndexOffset: 1000
       }).addTo(mapRef.current);
     }
@@ -205,6 +224,7 @@ export function MapView({
       dropoffMarkerRef.current = L.marker(dropoffLocation, {
         icon: L.divIcon({
           className: 'dropoff-marker-v2',
+          isMarker: true,
           html: `<div class="marker-container-v2">
                   <div class="dropoff-pin-black"></div>
                   <div class="marker-label-glass">
@@ -213,19 +233,48 @@ export function MapView({
                  </div>`,
           iconSize: [40, 40],
           iconAnchor: [20, 20],
-        }),
+        } as any),
         zIndexOffset: 1000
       }).addTo(mapRef.current);
     }
+  }, [pickupLocation, dropoffLocation]);
+
+  // Route Lifecycle: Update routing and polylines
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    // Cleanup previous routing attempts
+    if (routeAbortControllerRef.current) {
+      routeAbortControllerRef.current.abort();
+    }
+    if (routeLineRef.current) {
+      routeLineRef.current.remove();
+      routeLineRef.current = null;
+    }
+    if (routeDashRef.current) {
+      routeDashRef.current.remove();
+      routeDashRef.current = null;
+    }
+    if (routeRetryTimeoutRef.current) {
+      clearTimeout(routeRetryTimeoutRef.current);
+      routeRetryTimeoutRef.current = null;
+    }
+
 
     if (pickupLocation && dropoffLocation) {
         const coords = [pickupLocation, ...stops, dropoffLocation]
           .map(p => `${p![1]},${p![0]}`)
           .join(';');
         
+        const controller = new AbortController();
+        routeAbortControllerRef.current = controller;
+
         const url = `/api/routing/route?coords=${coords}`;
+
         const fetchRoute = (attempt = 1) => {
-          fetch(url)
+          if (controller.signal.aborted) return;
+
+          fetch(url, { signal: controller.signal })
             .then(async res => {
               const contentType = res.headers.get('content-type');
               if (!res.ok || !contentType || !contentType.includes('application/json')) {
@@ -235,14 +284,14 @@ export function MapView({
               return res.json();
             })
             .then(data => {
-              if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates && mapRef.current) {
+              if (controller.signal.aborted || !mapRef.current) return;
+
+              if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates) {
                 const roadPoints = data.routes[0].geometry.coordinates.map((p: [number, number]) => [p[1], p[0]] as [number, number]);
                 
-                if (routeLineRef.current) mapRef.current.removeLayer(routeLineRef.current);
-                if (routeDashRef.current) mapRef.current.removeLayer(routeDashRef.current);
-
                 const bounds = L.latLngBounds([pickupLocation!, ...stops, dropoffLocation!]);
-                // fitBounds with extra bottom padding to account for the service selection sheet
+
+
                 mapRef.current.fitBounds(bounds, { 
                   paddingBottomRight: [40, 380], 
                   paddingTopLeft: [40, 100],
@@ -265,10 +314,15 @@ export function MapView({
               }
             })
             .catch(err => {
-              if (attempt < 2) {
+              if (err.name === 'AbortError') return;
+              if (attempt < 2 && !controller.signal.aborted) {
                 console.log(`Routing fetch failed, retrying in 2s...`);
-                setTimeout(() => fetchRoute(attempt + 1), 2000);
+                routeRetryTimeoutRef.current = setTimeout(() => {
+                  routeRetryTimeoutRef.current = null;
+                  fetchRoute(attempt + 1);
+                }, 2000);
               } else {
+
                 console.warn("Routing Error after retry:", err.message);
               }
             });
@@ -277,6 +331,22 @@ export function MapView({
         fetchRoute();
     }
   }, [pickupLocation, dropoffLocation, stops]);
+
+  // Size Lifecycle: handle container shifts
+  useEffect(() => {
+    if (!mapRef.current || !containerRef.current) return;
+    
+    // debounced invalidate and fit-bounds if necessary
+    const resizeObserver = new ResizeObserver(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    });
+
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
 
   return (
     <div className="map-wrapper-inner">

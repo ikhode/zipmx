@@ -180,8 +180,12 @@ export default function App() {
        fetchNearby();
        const interval = setInterval(fetchNearby, 10000);
        return () => clearInterval(interval);
+    } else {
+       // Clear drivers when not in passenger mode or ride active
+       setNearbyDrivers([]);
     }
   }, [mode, hasActiveRide, mapBounds]);
+
 
   // Set initial temp location when entering selection mode
   useEffect(() => {
@@ -210,8 +214,11 @@ export default function App() {
       setFlyToTrigger(prev => prev + 1);
     } else {
       setSelectionInitialLocation(null);
+      setTempLocation(null);
+      setTempAddress('Buscando dirección...');
     }
   }, [selectionMode, pickupLocation, dropoffLocation, userLocation, pickupAddress, dropoffAddress, stops]);
+
 
   // Debounced geocoding for temp selection
   useEffect(() => {

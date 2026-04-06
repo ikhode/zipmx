@@ -145,6 +145,14 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     }, 400);
   };
 
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    }
+  }, []);
+
+
   const pickupInputRef = useRef<HTMLInputElement>(null);
   const dropoffInputRef = useRef<HTMLInputElement>(null);
 
@@ -216,6 +224,14 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       setLoading(false);
     }
   };
+
+  // Clear suggestions when planning is closed
+  useEffect(() => {
+    if (!isPlanning) {
+      setSuggestions([]);
+    }
+  }, [isPlanning]);
+
 
   const cancelRide = async (id: string) => {
     triggerHaptic('medium');
