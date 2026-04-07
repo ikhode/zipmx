@@ -98,14 +98,22 @@ class APIClient {
 
   static async quickSignup(fullName: string, phone: string, userType: 'passenger' | 'driver' = 'passenger') {
     const email = `${phone}@zipp.app`;
-    // We use the phone as a temporary password for the backend requirement
-    return await this.signup({
-      fullName,
-      phone,
-      email,
-      password: phone,
-      userType,
-    });
+    try {
+      return await this.signup({
+        fullName,
+        phone,
+        email,
+        password: phone,
+        userType,
+      });
+    } catch (error: any) {
+      const msg = (error.message || '').toLowerCase();
+      if (msg.includes('ya está registrado') || msg.includes('registrado') || msg.includes('unique')) {
+        // Fallback: If they already exist, just log them in seamlessly.
+        return await this.login(email, phone);
+      }
+      throw error;
+    }
   }
 
   static async login(email: string, password?: string) {

@@ -134,45 +134,40 @@ app.get('/geocoding/reverse', async (c) => {
 // Routing Proxy (OSRM) to avoid CORS
 app.get('/routing/route', async (c) => {
   const coords = c.req.query('coords'); // format: "lon1,lat1;lon2,lat2"
-    if (!coords) return c.json({ error: 'Coordinates are required' }, 400);
-  
-    // Use a more stable community-hosted OSRM server
-    const osrmInstances = [
-      `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?overview=full&geometries=geojson`,
-      `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
-    ];
-  
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000); // Increased to 6s for resilience
-  
-    try {
-      for (const url of osrmInstances) {
-        try {
-          if (controller.signal.aborted) break;
-          
-          const response = await fetch(url, {
-              headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' },
-              signal: controller.signal
-          });
-          
-          if (!response.ok) continue;
-          
-          const data = await response.json();
-          return c.json(data);
-        } catch (error: any) {
-          if (error.name === 'AbortError') {
-              return c.json({ error: 'Routing request timed out (6s)' }, 504);
-          }
-          console.warn(`OSRM instance failed: ${url}`, error.message);
-          continue;
-        }
-      }
-  
-      return c.json({ error: 'All routing instances failed or request timed out.' }, 503);
-    } finally {
-      clearTimeout(timeoutId);
+  if (!coords) return c.json({ error: 'Coordinates are required' }, 400);
+
+  // Use a more stable community-hosted OSRM server, adding an extra one as fallback
+  const osrmInstances = [
+    `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
+  ];
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6500); // 6.5s timeout
+
+  try {
+    // Launch all fetches concurrently to resolve the fastest one
+    const fetchPromises = osrmInstances.map(url => 
+      fetch(url, { headers: { 'User-Agent': 'ZippMobilityApp/1.0' }, signal: controller.signal })
+        .then(async res => {
+          if (!res.ok) throw new Error(`Status ${res.status}`);
+          const data = await res.json();
+          if (data.code !== 'Ok') throw new Error(`OSRM Error: ${data.code}`);
+          return data;
+        })
+    );
+
+    const fastestSuccess = await Promise.any(fetchPromises);
+    return c.json(fastestSuccess);
+  } catch (error: any) {
+    if (error.name === 'AbortError' || error.name === 'AggregateError') {
+       return c.json({ error: 'Routing servers are currently unavailable or timed out.' }, 504);
     }
-  });
+    return c.json({ error: 'All routing instances failed.' }, 503);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+});
 
 
 // Auth
@@ -201,25 +196,27 @@ app.post('/auth/signup', async (c) => {
     return c.json({ user, token });
   } catch (error: any) {
     const errorMsg = error?.message || 'Error desconocido';
+    const causeMsg = error?.cause?.message || '';
+    
     console.error('[/auth/signup] Critical Registration Error:', {
       message: errorMsg,
-      stack: error?.stack?.substring(0, 500),
-      cause: error?.cause
+      cause: causeMsg
     });
 
-    // Check for common SQLite/D1 errors and return localized messages
-    const lowerMsg = errorMsg.toLowerCase();
-    if (lowerMsg.includes('unique constraint') || lowerMsg.includes('unique')) {
-      if (lowerMsg.includes('email')) {
+    // En Drizzle D1, el error subyacente (UNIQUE constraint) a menudo se esconde en el cause.
+    const fullErrorString = `${errorMsg} ${causeMsg}`.toLowerCase();
+
+    if (fullErrorString.includes('unique constraint') || fullErrorString.includes('unique')) {
+      if (fullErrorString.includes('email')) {
         return c.json({ error: 'Este correo ya está registrado.' }, 409);
       }
-      if (lowerMsg.includes('phone')) {
+      if (fullErrorString.includes('phone')) {
         return c.json({ error: 'Este número de teléfono ya está registrado.' }, 409);
       }
       return c.json({ error: 'Este correo o teléfono ya está registrado.' }, 409);
     }
 
-    if (lowerMsg.includes('jwt_secret')) {
+    if (fullErrorString.includes('jwt_secret')) {
       return c.json({ error: 'Error de configuración del servidor (JWT).' }, 500);
     }
 

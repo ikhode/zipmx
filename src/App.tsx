@@ -333,10 +333,12 @@ export default function App() {
           <div className="passenger-top-actions stagger-in">
             {!session ? (
               <button 
-                className="minimal-auth-btn interactive-scale" 
-                onClick={() => { triggerHaptic('medium'); setShowModeSelector(true); }}
+                className="premium-auth-btn interactive-scale" 
+                style={{ pointerEvents: 'auto', position: 'relative', zIndex: 9999 }}
+                onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
               >
-                Identifícate
+                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" style={{marginRight: '8px', pointerEvents: 'none'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round"></path><circle cx="12" cy="7" r="4" strokeLinecap="round" strokeLinejoin="round"></circle></svg>
+                Iniciar sesión
               </button>
             ) : (
               <button 
@@ -384,7 +386,7 @@ export default function App() {
                     <div className="guest-cta-minimal fade-in">
                       <span className="pill-badge">Explora Zipp</span>
                       <p>Identifícate para proteger tu viaje y ver precios exactos</p>
-                      <button className="interactive-scale" onClick={() => setShowModeSelector(true)}>INICIAR SESIÓN</button>
+                      <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}>INICIAR SESIÓN</button>
                     </div>
                   )}
                   
