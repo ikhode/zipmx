@@ -267,7 +267,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
              </div>
              <div className="driver-info-mini">
                <div className="driver-name-mini">{activeRide.status === 'requested' ? 'Asignando...' : 'Juan'}</div>
-               <div className="vehicle-info-mini">Toyota Corolla • ZIP123</div>
+               {activeRide.status !== 'requested' && <div className="vehicle-info-mini">Toyota Corolla • ZIP123</div>}
              </div>
              <div className="driver-action-mini">
                 <button className="icon-btn-mini interactive-scale" onClick={() => triggerHaptic('light')}>📞</button>

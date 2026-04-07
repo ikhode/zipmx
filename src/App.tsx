@@ -83,6 +83,7 @@ export default function App() {
   const [showQuickAuth, setShowQuickAuth] = useState(false);
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
   const [flyToTrigger, setFlyToTrigger] = useState(0);
+  const lastSelectionMode = React.useRef<SelectionType>('none');
 
   const onLoginRequired = (type: 'passenger' | 'driver') => {
     setQuickAuthType(type);
@@ -205,7 +206,15 @@ export default function App() {
 
   // Set initial temp location when entering selection mode
   useEffect(() => {
+    const isSameMode = (a: SelectionType, b: SelectionType) => {
+      if (typeof a === 'object' && typeof b === 'object') return a.type === b.type && a.index === b.index;
+      return a === b;
+    };
+
     if (selectionMode !== 'none') {
+      if (isSameMode(lastSelectionMode.current, selectionMode)) return;
+      lastSelectionMode.current = selectionMode;
+
       let initial: [number, number] | null = null;
       let initialAddr = 'Buscando dirección...';
 
@@ -229,6 +238,7 @@ export default function App() {
       // Forzar que el mapa vuele a esta ubicación inicial
       setFlyToTrigger(prev => prev + 1);
     } else {
+      lastSelectionMode.current = 'none';
       setSelectionInitialLocation(null);
       setTempLocation(null);
       setTempAddress('Buscando dirección...');
