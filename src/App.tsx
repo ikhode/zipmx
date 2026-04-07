@@ -42,7 +42,7 @@ const MapSelectionOverlay = React.memo(({
 
 const MemoizedMapView = React.memo(MapView);
 
-const DEFAULT_LOCATION: [number, number] = [19.0148, -104.2403];
+const DEFAULT_LOCATION: [number, number] = [18.9113, -103.8743];
 
 export default function App() {
   const { showToast } = useToast();
@@ -92,33 +92,49 @@ export default function App() {
 
   const handleOpenAuth = useCallback(() => onLoginRequired('passenger'), []);
 
-  // --- Geolocation: get user's real position on mount ---
+  // --- Geolocation: get user's real position and track it ---
   useEffect(() => {
     if (!navigator.geolocation) {
       setGeoLoading(false);
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+
+    // Use watchPosition to continuously get high accuracy and follow the user
+    const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
         const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude];
         setUserLocation(loc);
-        setMapBounds(loc);
+        
         // Auto-set pickup to current location if not set yet
-        if (!pickupLocation) {
-          setPickupLocation(loc);
-          reverseGeocode(loc[0], loc[1]).then((res) => {
-            if (res) setPickupAddress(formatAddress(res));
-            else setPickupAddress('Mi ubicación actual');
-          });
-        }
+        setPickupLocation((prevPickup) => {
+          if (!prevPickup) {
+            setMapBounds(loc);
+            reverseGeocode(loc[0], loc[1]).then((res) => {
+              if (res) setPickupAddress(formatAddress(res));
+              else setPickupAddress('Mi ubicación actual');
+            });
+            return loc;
+          }
+          return prevPickup;
+        });
+
+        // Also update selectionInitialLocation if they just entered selection mode
+        setSelectionInitialLocation((prev) => {
+           if (prev && prev[0] === DEFAULT_LOCATION[0]) return loc;
+           return prev;
+        });
+        
         setGeoLoading(false);
       },
       () => {
-        // Permission denied or error — use default
         setGeoLoading(false);
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
     );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -16,7 +16,7 @@ interface MapViewProps {
 }
 
 export function MapView({
-  center = [19.4326, -99.1332],
+  center = [18.9113, -103.8743],
   zoom = 13,
   pickupLocation,
   dropoffLocation,
