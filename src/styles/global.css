@@ -2212,4 +2212,116 @@ button:active {
 
 .active-scale:active {
   transform: scale(0.96);
-}
+}
+
+/* --- Help & SOS Section --- */
+.help-sos-card {
+  background: linear-gradient(135deg, #FF4B2B 0%, #FF416C 100%);
+  border-radius: 20px;
+  padding: 24px;
+  color: white;
+  margin-top: 8px;
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 12px 24px rgba(255, 65, 108, 0.3);
+}
+
+.help-sos-card h3 {
+  font-size: 20px;
+  font-weight: 950;
+  margin-bottom: 4px;
+  color: white;
+}
+
+.help-sos-card p {
+  font-size: 13px;
+  opacity: 0.9;
+  font-weight: 700;
+  margin: 0;
+}
+
+.sos-btn-pulse {
+  background: white;
+  color: #FF416C;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+  animation: sos-pulse-white 2s infinite;
+  border: none;
+  cursor: pointer;
+}
+
+@keyframes sos-pulse-white {
+  0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
+  70% { box-shadow: 0 0 0 15px rgba(255, 255, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+
+.help-category-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.category-card-premium {
+  background: #F9FAFB;
+  border-radius: 20px;
+  padding: 20px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid #F3F4F6;
+  cursor: pointer;
+}
+
+.category-card-premium:hover {
+  background: white;
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.05);
+}
+
+.cat-icon-box {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-bottom: 16px;
+}
+
+.cat-title {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.support-action-footer {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid #F3F4F6;
+}
+
+.btn-premium-support {
+  width: 100%;
+  background: black;
+  color: white;
+  padding: 20px;
+  border-radius: 18px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+  border: none;
+  cursor: pointer;
+}

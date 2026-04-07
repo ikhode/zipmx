@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import APIClient from '../lib/api';
 import { triggerHaptic } from '../lib/haptics';
+import { useToast } from './ToastProvider';
 
 interface AccountMenuSheetProps {
   session: any;
@@ -58,30 +59,76 @@ const TripsView: React.FC<{ onBack: () => void, onClose: () => void }> = ({ onBa
   </div>
 );
 
-const HelpView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
-  <div className="help-view fade-in">
-    {renderSubViewHeader('Ayuda', onBack)}
-    <div className="help-list">
-       <div className="help-item" style={{ padding: '20px 0', borderBottom: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between' }}>
-          <span>Problemas con un viaje</span>
-          <span>›</span>
-       </div>
-       <div className="help-item" style={{ padding: '20px 0', borderBottom: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between' }}>
-          <span>Opciones de pago y facturación</span>
-          <span>›</span>
-       </div>
-       <div className="help-item" style={{ padding: '20px 0', borderBottom: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between' }}>
-          <span>Guía de seguridad ZIPP</span>
-          <span>›</span>
-       </div>
-       <div className="help-item" style={{ padding: '20px 0', display: 'flex', justifyContent: 'space-between' }}>
-          <span>Informar de un objeto perdido</span>
-          <span>›</span>
-       </div>
+const HelpView: React.FC<{ onBack: () => void, onAction: (v: ViewType) => void }> = ({ onBack, onAction }) => {
+  const { showToast } = useToast();
+
+  const handleSOS = () => {
+    triggerHaptic('error');
+    if (confirm('¿Deseas llamar a servicios de emergencia (911)?')) {
+      window.open('tel:911');
+    }
+  };
+
+  const handleSupport = () => {
+    triggerHaptic('medium');
+    window.open('https://wa.me/5211234567890?text=Hola,%20necesito%20ayuda%20con%20ZIPP');
+  };
+
+  const handleClick = (id: string) => {
+    triggerHaptic('light');
+    switch (id) {
+      case 'trip':
+        showToast('Cargando tus viajes recientes...', 'info');
+        setTimeout(() => onAction('trips'), 1000);
+        break;
+      case 'safety':
+        showToast('Abriendo guía de seguridad interactiva...', 'info');
+        window.open('https://zipp.pages.dev/safety'); // Simulated URL
+        break;
+      case 'lost':
+        window.open('https://wa.me/5211234567890?text=Hola,%20perdí%20un%20objeto%20en%20mi%20último%20vuelo%20con%20ZIPP');
+        break;
+      default:
+        break;
+    }
+  };
+
+  const categories = [
+    { id: 'trip', title: 'Problemas con un viaje', icon: '🚗', color: '#E0F2FE' },
+    { id: 'safety', title: 'Guía de seguridad', icon: '🛡️', color: '#FEF9C3' },
+    { id: 'lost', title: 'Objeto perdido', icon: '🎧', color: '#F3E8FF' }
+  ];
+
+  return (
+    <div className="help-view fade-in">
+      {renderSubViewHeader('Ayuda', onBack)}
+      
+      <div className="help-sos-card stagger-in" onClick={handleSOS}>
+        <div className="sos-info">
+          <h3>Seguridad SOS</h3>
+          <p>Asistencia inmediata en caso de emergencia</p>
+        </div>
+        <button className="sos-btn-pulse active-scale">🚨</button>
+      </div>
+
+      <div className="help-category-grid">
+        {categories.map((cat, i) => (
+          <div key={cat.id} className="category-card-premium stagger-in" style={{ animationDelay: `${i * 0.1}s` }} onClick={() => handleClick(cat.id)}>
+            <div className="cat-icon-box" style={{ background: cat.color }}>{cat.icon}</div>
+            <div className="cat-title">{cat.title}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="support-action-footer stagger-in">
+        <button className="btn-premium-support interactive-scale" onClick={handleSupport}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 1 1-7.6-11.7 8.5 8.5 0 0 1 2.3 0z"></path><path d="M21 3L14.5 9.5"></path><path d="M15.5 3H21v5.5"></path></svg>
+          Contactar Soporte
+        </button>
+      </div>
     </div>
-    <button style={{ width: '100%', marginTop: '32px', background: '#00D1FF22', color: 'var(--accent-alt)', padding: '16px', borderRadius: '16px', fontWeight: 800 }}>Contactar Soporte</button>
-  </div>
-);
+  );
+};
 
 const MainMenuView: React.FC<{ 
   userName: string, 
@@ -196,7 +243,7 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({ session, cur
       case 'trips':
         return <TripsView onBack={handleBack} onClose={onClose} />;
       case 'help':
-        return <HelpView onBack={handleBack} />;
+        return <HelpView onBack={handleBack} onAction={handleAction} />;
       case 'settings':
         return (
           <div className="fade-in">

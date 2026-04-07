@@ -284,7 +284,21 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
              <div className="meta-row"><span>Pago</span> <strong>Efectivo</strong></div>
           </div>
 
-          <button className="minimal-cancel-btn interactive-scale" onClick={() => cancelRide(activeRide.id)}>Cancelar</button>
+          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+            <button 
+              className="interactive-scale" 
+              onClick={() => {
+                triggerHaptic('error');
+                if (confirm('¿Deseas llamar a servicios de emergencia (911)?')) {
+                  window.open('tel:911');
+                }
+              }}
+              style={{ flex: 1, background: '#FF4B2B22', color: '#FF416C', border: 'none', padding: '16px', borderRadius: '16px', fontWeight: 800, fontSize: '15px' }}
+            >
+              🆘 SOS
+            </button>
+            <button className="minimal-cancel-btn interactive-scale" style={{ flex: 2, marginTop: 0 }} onClick={() => cancelRide(activeRide.id)}>Cancelar viaje</button>
+          </div>
         </div>
       </div>
     );
