@@ -11,7 +11,7 @@ interface AccountMenuSheetProps {
   onClose: () => void;
 }
 
-type ViewType = 'menu' | 'wallet' | 'trips' | 'help' | 'settings' | 'zipp-pro';
+type ViewType = 'menu' | 'wallet' | 'trips' | 'help' | 'settings' | 'zipp-pro' | 'safety';
 
 const renderSubViewHeader = (title: string, onBack: () => void) => (
   <div className="sub-view-header" style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
@@ -59,6 +59,181 @@ const TripsView: React.FC<{ onBack: () => void, onClose: () => void }> = ({ onBa
   </div>
 );
 
+const SettingsView: React.FC<{ session: any, onBack: () => void }> = ({ session, onBack }) => {
+  const user = session?.user;
+  const { showToast } = useToast();
+
+  const menuItems = [
+    { icon: '👤', label: 'Datos personales', value: user?.fullName },
+    { icon: '📧', label: 'Email', value: user?.email },
+    { icon: '📞', label: 'Teléfono', value: user?.phone },
+    { icon: '🛡️', label: 'Estado de cuenta', value: user?.verified ? 'Verificada' : 'Pendiente de verificación', color: user?.verified ? '#10B981' : '#F59E0B' }
+  ];
+
+  const handleAction = (label: string) => {
+    triggerHaptic('light');
+    showToast(`${label} estará disponible en la próxima actualización`, 'info');
+  };
+
+  return (
+    <div className="settings-view fade-in">
+      {renderSubViewHeader('Configuración', onBack)}
+      
+      <div className="settings-section" style={{ marginBottom: '32px' }}>
+        <h3 style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', paddingLeft: '8px' }}>Perfil</h3>
+        <div className="settings-list-premium" style={{ background: '#F8FAFC', borderRadius: '24px', overflow: 'hidden' }}>
+          {menuItems.map((item, i) => (
+            <div key={i} className="settings-item-premium" style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              padding: '16px 20px', 
+              borderBottom: i < menuItems.length - 1 ? '1px solid #F1F5F9' : 'none' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span>{item.icon}</span>
+                <span style={{ fontWeight: 700, fontSize: '14px' }}>{item.label}</span>
+              </div>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: item.color || '#64748B' }}>{item.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <h3 style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', paddingLeft: '8px' }}>Preferencias</h3>
+        <div className="settings-list-premium" style={{ background: '#F8FAFC', borderRadius: '24px', overflow: 'hidden' }}>
+          {[
+            { icon: '🔔', label: 'Notificaciones' },
+            { icon: '💳', label: 'Métodos de pago' },
+            { icon: '🔒', label: 'Privacidad y datos' }
+          ].map((item, i) => (
+            <div key={i} className="settings-item-premium interactive-scale" onClick={() => handleAction(item.label)} style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              padding: '20px', 
+              cursor: 'pointer',
+              borderBottom: i < 2 ? '1px solid #F1F5F9' : 'none' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span>{item.icon}</span>
+                <span style={{ fontWeight: 700, fontSize: '15px' }}>{item.label}</span>
+              </div>
+              <span style={{ opacity: 0.3 }}>›</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ZippProView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+  const { showToast } = useToast();
+
+  const benefits = [
+    { icon: '💎', title: 'Ahorro Garantizado', desc: 'Hasta 40% de descuento en todos tus viajes.' },
+    { icon: '⚡', title: 'Prioridad Zipp', desc: 'Asignación más rápida incluso en horas pico.' },
+    { icon: '👑', title: 'Soporte VIP', desc: 'Atención personalizada prioritaria 24/7.' }
+  ];
+
+  return (
+    <div className="zipp-pro-view fade-in">
+      {renderSubViewHeader('Zipp PRO', onBack)}
+      
+      <div className="pro-hero-card stagger-in" style={{ 
+        background: 'linear-gradient(135deg, #000 0%, #333 100%)', 
+        padding: '32px 24px', 
+        borderRadius: '28px', 
+        color: 'white', 
+        textAlign: 'center',
+        marginBottom: '32px',
+        boxShadow: '0 15px 35px rgba(0,0,0,0.2)',
+        position: 'relative',
+        overflow: 'hidden'
+      }}>
+        <div className="pro-shine" style={{ position: 'absolute', top: '-50%', left: '-50%', width: '200%', height: '200%', background: 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%)', pointerEvents: 'none' }}></div>
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>🏷️</div>
+        <h3 style={{ fontSize: '28px', fontWeight: 900, marginBottom: '8px', letterSpacing: '-0.5px' }}>ZIPP <span style={{ color: '#FCD34D' }}>PRO</span></h3>
+        <p style={{ fontSize: '15px', opacity: 0.7, lineHeight: 1.5 }}>Eleva tu experiencia de movilidad al nivel más exclusivo.</p>
+      </div>
+
+      <div className="pro-benefits-list" style={{ display: 'grid', gap: '16px', marginBottom: '40px' }}>
+        {benefits.map((b, i) => (
+          <div key={i} className="pro-benefit-item stagger-in" style={{ animationDelay: `${(i+1)*0.1}s`, display: 'flex', gap: '16px', alignItems: 'center', padding: '16px', background: '#F8FAFC', borderRadius: '20px' }}>
+            <div style={{ fontSize: '24px', width: '48px', height: '48px', borderRadius: '14px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 10px rgba(0,0,0,0.03)' }}>{b.icon}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 800, fontSize: '15px' }}>{b.title}</div>
+              <div style={{ fontSize: '13px', opacity: 0.6, marginTop: '2px' }}>{b.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button 
+        className="btn-subscribe-pro active-scale" 
+        onClick={() => { triggerHaptic('success'); showToast('Zipp PRO estará disponible muy pronto', 'success'); }}
+        style={{ width: '100%', background: '#000', color: 'white', padding: '20px', borderRadius: '20px', fontWeight: 900, fontSize: '16px', boxShadow: '0 10px 20px rgba(0,0,0,0.1)' }}
+      >
+        Suscribirme ahora
+      </button>
+      <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Términos y condiciones aplican</p>
+    </div>
+  );
+};
+
+const SafetyView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
+  <div className="safety-view fade-in">
+    {renderSubViewHeader('Guía de seguridad', onBack)}
+    
+    <div className="safety-cards-container" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div className="premium-safety-main stagger-in" style={{ 
+        background: 'linear-gradient(135deg, #000 0%, #333 100%)', 
+        padding: '24px', 
+        borderRadius: '24px', 
+        color: 'white',
+        boxShadow: '0 10px 25px rgba(0,0,0,0.1)'
+      }}>
+        <div style={{ fontSize: '24px', marginBottom: '12px' }}>🛡️</div>
+        <h3 style={{ fontSize: '20px', fontWeight: 900, marginBottom: '8px' }}>Tu seguridad es nuestra prioridad</h3>
+        <p style={{ fontSize: '14px', opacity: 0.8, lineHeight: '1.6' }}>
+          Hemos diseñado cada detalle de la experiencia ZIPP para que viajes con total confianza y tranquilidad.
+        </p>
+      </div>
+
+      <div className="safety-feature-list" style={{ display: 'grid', gap: '16px' }}>
+        {[
+          { icon: '👨‍✈️', title: 'Conductores Verificados', desc: 'Validamos identidad y antecedentes rigurosamente.' },
+          { icon: '📍', title: 'Seguimiento GPS', desc: 'Tu viaje es monitoreado en tiempo real 24/7.' },
+          { icon: '📲', title: 'Comparte tu Viaje', desc: 'Envía tu ubicación a contactos de confianza.' },
+          { icon: '🚨', title: 'Botón de Emergencia', desc: 'Acceso directo al 911 en caso de cualquier incidente.' }
+        ].map((item, i) => (
+          <div key={i} className="safety-feature-item stagger-in" style={{ 
+            animationDelay: `${(i + 1) * 0.1}s`,
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '16px', 
+            padding: '16px', 
+            background: '#F8FAFC', 
+            borderRadius: '20px' 
+          }}>
+            <div style={{ fontSize: '24px' }}>{item.icon}</div>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--text)' }}>{item.title}</div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>{item.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      
+      <div className="safety-trust-banner stagger-in" style={{ animationDelay: '0.5s', textAlign: 'center', padding: '20px', opacity: 0.5 }}>
+        <p style={{ fontSize: '12px', fontWeight: 700 }}>CERTIFICADO DE SEGURIDAD ZIPP 2026</p>
+      </div>
+    </div>
+  </div>
+);
+
 const HelpView: React.FC<{ onBack: () => void, onAction: (v: ViewType) => void }> = ({ onBack, onAction }) => {
   const { showToast } = useToast();
 
@@ -82,8 +257,8 @@ const HelpView: React.FC<{ onBack: () => void, onAction: (v: ViewType) => void }
         setTimeout(() => onAction('trips'), 1000);
         break;
       case 'safety':
-        showToast('Abriendo guía de seguridad interactiva...', 'info');
-        window.open('https://zipp.pages.dev/safety'); // Simulated URL
+        showToast('Cargando guía de seguridad...', 'info');
+        setTimeout(() => onAction('safety'), 600);
         break;
       case 'lost':
         window.open('https://wa.me/5211234567890?text=Hola,%20perdí%20un%20objeto%20en%20mi%20último%20vuelo%20con%20ZIPP');
@@ -244,23 +419,12 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({ session, cur
         return <TripsView onBack={handleBack} onClose={onClose} />;
       case 'help':
         return <HelpView onBack={handleBack} onAction={handleAction} />;
+      case 'safety':
+        return <SafetyView onBack={() => handleAction('help')} />;
       case 'settings':
-        return (
-          <div className="fade-in">
-            {renderSubViewHeader('Configuración', handleBack)}
-            <p style={{ opacity: 0.5, textAlign: 'center', padding: '40px' }}>Opciones de cuenta en desarrollo</p>
-          </div>
-        );
+        return <SettingsView session={session} onBack={handleBack} />;
       case 'zipp-pro':
-        return (
-          <div className="fade-in">
-            {renderSubViewHeader('Zipp PRO', handleBack)}
-            <div style={{ background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)', padding: '32px', borderRadius: '24px', color: 'white', textAlign: 'center' }}>
-              <h3 style={{ fontSize: '24px', fontWeight: 900, marginBottom: '12px' }}>Próximamente</h3>
-              <p>Obtén beneficios exclusivos y ahorra en cada viaje.</p>
-            </div>
-          </div>
-        );
+        return <ZippProView onBack={handleBack} />;
       default:
         return null;
     }
