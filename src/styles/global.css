@@ -2114,3 +2114,102 @@ button:active {
 .uber-confirm-btn:active {
   transform: scale(0.96);
 }
+
+/* --- PREMIUM ACCOUNT MENU --- */
+.account-menu-sheet-container {
+  overflow-x: hidden;
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sub-view-header {
+  animation: slideInRight 0.3s var(--transition-spring);
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.back-btn-minimal {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-fast);
+}
+
+.back-btn-minimal:hover {
+  background: var(--surface-alt);
+}
+
+.premium-card-wallet {
+  transition: var(--transition-smooth);
+}
+
+.premium-card-wallet:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+}
+
+.wallet-btn {
+  transition: var(--transition-fast);
+  border: 1px solid transparent;
+}
+
+.wallet-btn:hover {
+  background: white !important;
+  border-color: var(--border) !important;
+  box-shadow: var(--shadow-subtle);
+}
+
+.action-item-premium {
+  transition: var(--transition-smooth);
+}
+
+.action-item-premium:hover {
+  background: white !important;
+  box-shadow: var(--shadow-elevated) !important;
+  transform: translateY(-2px);
+}
+
+.zipp-cash-premium {
+  transition: var(--transition-smooth);
+}
+
+.zipp-cash-premium:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 35px rgba(0,0,0,0.2) !important;
+}
+
+.link-item-premium {
+  transition: var(--transition-fast);
+}
+
+.link-item-premium:hover {
+  padding-left: 8px !important;
+  background: #F8FAFC;
+}
+
+.logout-btn-premium {
+  transition: var(--transition-fast);
+}
+
+.logout-btn-premium:hover {
+  background: #FEE2E2 !important;
+  border-color: #FCA5A5 !important;
+  transform: translateY(-2px);
+}
+
+.active-scale:active {
+  transform: scale(0.96);
+}

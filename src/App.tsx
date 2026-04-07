@@ -222,7 +222,6 @@ export default function App() {
         initial = pickupLocation || userLocation;
         initialAddr = pickupAddress || 'Mi ubicación';
       } else if (selectionMode === 'dropoff') {
-        // Mejor UX: si vamos a elegir destino y no hay uno, empezar en el origen
         initial = dropoffLocation || pickupLocation || userLocation;
         initialAddr = dropoffAddress || pickupAddress || 'Ubicación actual';
       } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
@@ -233,9 +232,7 @@ export default function App() {
       const loc: [number, number] = initial || userLocation || DEFAULT_LOCATION;
       setTempLocation(loc);
       setTempAddress(initialAddr);
-      // Guardar la ubicación inicial para el center del mapa (no se mueve con el drag)
       setSelectionInitialLocation(loc);
-      // Forzar que el mapa vuele a esta ubicación inicial
       setFlyToTrigger(prev => prev + 1);
     } else {
       lastSelectionMode.current = 'none';
@@ -284,8 +281,6 @@ export default function App() {
   const stopPositions = useMemo<[number, number][]>(() => stops.map(s => s.position), [stops]);
 
   const mapCenter = useMemo<[number, number]>(() => {
-    // En modo selección usamos la ubicación INICIAL (fijada al entrar),
-    // NO tempLocation que cambia con cada drag del mapa (evita el loop de feedback)
     if (selectionMode !== 'none' && selectionInitialLocation) return selectionInitialLocation;
     return pickupLocation || userLocation || DEFAULT_LOCATION;
   }, [selectionMode, selectionInitialLocation, pickupLocation, userLocation]);
@@ -322,7 +317,6 @@ export default function App() {
     if (addr) setDropoffAddress(addr);
   }, []);
 
-  // Expose userLocation so child components can use it
   const handleUseMyLocation = useCallback(async (field: 'pickup' | 'dropoff') => {
     const loc = userLocation;
     if (!loc) return;
@@ -336,6 +330,29 @@ export default function App() {
       setDropoffAddress(addr);
     }
   }, [userLocation]);
+
+  const handleSwitchMode = useCallback(() => {
+    if (hasActiveRide) {
+       showToast("No puedes cambiar de modo con un viaje activo", "error");
+       return;
+    }
+    
+    triggerHaptic('medium');
+    
+    if (mode === 'passenger') {
+       if (session && !session.user.verified) {
+          setShowAccountMenu(false);
+          setShowVerificationSheet({ type: 'driver' });
+       } else {
+          setMode('driver');
+          setPlanningStarted(false);
+          setShowAccountMenu(false);
+       }
+    } else {
+       setMode('passenger');
+       setShowAccountMenu(false);
+    }
+  }, [hasActiveRide, mode, session, showToast]);
 
   return (
     <div className={`app-container ${mode === 'passenger' && !pickupLocation && !dropoffLocation && selectionMode === 'none' ? 'is-home' : ''}`}>
@@ -353,7 +370,6 @@ export default function App() {
         />
       </div>
 
-      {/* Dynamic Header: Visible only when NOT in Selection Mode */}
       {selectionMode === 'none' && (
         <div className={`zipp-premium-header ${isHeaderHidden ? 'hidden' : ''} mode-${mode}`}>
           <div className="zipp-header-left stagger-in">
@@ -493,31 +509,7 @@ export default function App() {
           currentMode={mode}
           hasActiveRide={hasActiveRide}
           onClose={handleAccountMenuClose} 
-          onSwitchMode={() => { 
-            if (hasActiveRide) {
-               showToast("No puedes cambiar de modo con un viaje activo", "error");
-               return;
-            }
-            
-            triggerHaptic('medium');
-            
-            // Direct auto-switch logic
-            if (mode === 'passenger') {
-               // Try to switch to driver
-               if (session && !session.user.verified) {
-                  setShowAccountMenu(false);
-                  setShowVerificationSheet({ type: 'driver' });
-               } else {
-                  setMode('driver');
-                  setPlanningStarted(false);
-                  setShowAccountMenu(false);
-               }
-            } else {
-               // Switch back to passenger
-               setMode('passenger');
-               setShowAccountMenu(false);
-            }
-          }}
+          onSwitchMode={handleSwitchMode}
         />
       </BottomSheet>
 
@@ -589,7 +581,6 @@ export default function App() {
         )}
       </BottomSheet>
 
-      {/* Splash Screen */}
       {showSplash && (
         <div className={`app-splash-screen ${splashFading ? 'fade-out' : ''}`}>
            <div className="splash-logo-container">
