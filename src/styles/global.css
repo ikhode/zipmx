@@ -194,6 +194,86 @@ button:active {
   position: relative;
 }
 
+/* --- ZIPP BLACK PREMIUM HEADER --- */
+.zipp-premium-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: #000000;
+  z-index: 100;
+  padding: calc(env(safe-area-inset-top, 10px) + 12px) 20px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: auto;
+  transition: var(--transition-smooth);
+}
+
+.zipp-premium-header.hidden {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+.zipp-header-left {
+  display: flex;
+  align-items: center;
+}
+
+.zipp-logo-text {
+  font-size: 22px;
+  font-weight: 500;
+  color: #FFFFFF;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.zipp-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.zipp-login-link {
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 700;
+  background: transparent;
+  padding: 4px;
+  display: inline-block;
+  text-align: center;
+  margin-right: 4px;
+}
+
+.zipp-signup-btn {
+  background: #FFFFFF;
+  color: #000000;
+  padding: 8px 16px;
+  border-radius: 100px;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.zipp-menu-btn {
+  color: #FFFFFF;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0 2px 4px;
+}
+
+.zipp-mode-btn {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  color: #FFFFFF;
+  padding: 8px 16px;
+  border-radius: 100px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 /* --- HEADER --- */
 .app-header {
   position: fixed;

@@ -329,27 +329,36 @@ export default function App() {
 
       {/* Dynamic Header: Visible only when NOT in Selection Mode */}
       {selectionMode === 'none' && (
-        <div className={`app-header ${isHeaderHidden ? 'hidden' : ''} mode-${mode}`}>
-          <div className="passenger-top-actions stagger-in">
+        <div className={`zipp-premium-header ${isHeaderHidden ? 'hidden' : ''} mode-${mode}`}>
+          <div className="zipp-header-left stagger-in">
+            <span className="zipp-logo-text">ZIPP</span>
+          </div>
+          <div className="zipp-header-right stagger-in">
             {!session ? (
-              <button 
-                className="premium-auth-btn interactive-scale" 
-                style={{ pointerEvents: 'auto', position: 'relative', zIndex: 9999 }}
-                onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
-              >
-                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" style={{marginRight: '8px', pointerEvents: 'none'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round"></path><circle cx="12" cy="7" r="4" strokeLinecap="round" strokeLinejoin="round"></circle></svg>
-                Iniciar sesión
-              </button>
+              <>
+                <button 
+                  className="zipp-login-link interactive-scale" 
+                  onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
+                >
+                  Inicia sesión
+                </button>
+                <button 
+                  className="zipp-signup-btn interactive-scale" 
+                  onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
+                >
+                  Regístrate
+                </button>
+              </>
             ) : (
               <button 
-                className="minimal-pill-btn interactive-scale" 
+                className="zipp-mode-btn interactive-scale" 
                 onClick={() => { triggerHaptic('medium'); setShowModeSelector(true); }}
               >
                 {mode === 'passenger' ? 'Pasajero' : 'Conductor'}
               </button>
             )}
             
-            <button className="minimal-menu-btn interactive-scale" onClick={handleAccountMenuOpen}>
+            <button className="zipp-menu-btn interactive-scale" onClick={handleAccountMenuOpen}>
                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
             </button>
           </div>
