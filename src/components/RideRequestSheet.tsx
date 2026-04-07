@@ -238,6 +238,10 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     try {
         await APIClient.cancelRide(id);
         showToast('Viaje cancelado', 'info');
+        // Reset local state and return home
+        setActiveRide(null);
+        setStep('service');
+        onPlanningClose?.(); 
     } catch (err: any) {
         showToast(err.message, 'error');
     }
@@ -288,9 +292,9 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   if (isPlanning) {
     return (
       <div className="ride-planner full-screen fade-in">
-        <div className="planner-header-minimal">
-           <button className="back-btn-m interactive-scale" onClick={() => { setIsPlanning(false); onPlanningClose?.(); triggerHaptic('light'); }}>←</button>
-           <h2 className="planner-title-m">¿A dónde vamos?</h2>
+        <div className="planner-header-minimal" style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+           <button className="back-btn-minimal interactive-scale" onClick={() => { setIsPlanning(false); onPlanningClose?.(); triggerHaptic('light'); }} style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>←</button>
+           <h2 className="planner-title-m" style={{ margin: 0, fontSize: '20px', fontWeight: 900 }}>¿A dónde vamos?</h2>
         </div>
 
         <div className="planner-inputs-minimal">
@@ -387,20 +391,23 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       
       {step === 'service' && (
         <div className="service-minimal-view stagger-in">
-          <h2 className="minimal-title-large">¿A dónde vamos?</h2>
+          <div className="service-header-mini" style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+            <button className="back-btn-minimal interactive-scale" onClick={onPlanningClose} style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>←</button>
+            <h2 className="minimal-title-large" style={{ margin: 0 }}>¿A dónde vamos?</h2>
+          </div>
           <div className="minimal-address-card interactive-scale" onClick={() => { setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('light'); }}>
              <div className="addr-row-mini"><span className="dot-m origin"></span> {pickupAddress || 'Actual'}</div>
              <div className="addr-row-mini"><span className="dot-m dest"></span> {dropoffAddress || '¿A dónde vas?'}</div>
           </div>
           
           <div className="minimal-services-row">
-             <button className="service-button-minimal interactive-scale" onClick={() => { onRideTypeChange('ride'); setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('medium'); }}>
-                <span className="icon-m">🚗</span>
-                <span className="label-m">Viaje</span>
+             <button className="service-button-minimal interactive-scale" style={{ flex: 1 }} onClick={() => { onRideTypeChange('ride'); setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('medium'); }}>
+                <span className="icon-m" style={{ fontSize: '24px', display: 'block', marginBottom: '8px' }}>🚗</span>
+                <span className="label-m" style={{ fontWeight: 800 }}>Viaje</span>
              </button>
-             <button className="service-button-minimal interactive-scale" onClick={() => { onRideTypeChange('errand'); setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('medium'); }}>
-                <span className="icon-m">📦</span>
-                <span className="label-m">Envío</span>
+             <button className="service-button-minimal interactive-scale" style={{ flex: 1 }} onClick={() => { onRideTypeChange('errand'); setIsPlanning(true); setFocusedInput('pickup'); triggerHaptic('medium'); }}>
+                <span className="icon-m" style={{ fontSize: '24px', display: 'block', marginBottom: '8px' }}>📦</span>
+                <span className="label-m" style={{ fontWeight: 800 }}>Envío</span>
              </button>
           </div>
         </div>
