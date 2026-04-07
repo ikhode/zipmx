@@ -309,6 +309,7 @@ export default function App() {
 
   const handleResetPlanning = useCallback(() => {
     setPlanningStarted(false);
+    setIsHeaderHidden(false);
     setPickupLocation(null);
     setPickupAddress('');
     setDropoffLocation(null);

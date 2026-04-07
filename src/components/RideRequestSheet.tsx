@@ -128,7 +128,8 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
 
   useEffect(() => {
     onHeaderVisibilityChange(isPlanning || step === 'tracking');
-  }, [isPlanning, step]);
+    return () => onHeaderVisibilityChange(false);
+  }, [isPlanning, step, onHeaderVisibilityChange]);
 
   const handleSearch = (text: string) => {
     setSearchText(text);
