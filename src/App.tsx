@@ -307,6 +307,20 @@ export default function App() {
   const handleAccountMenuClose = useCallback(() => setShowAccountMenu(false), []);
   const handlePromoClose = useCallback(() => setShowPromoDetails(false), []);
 
+  const handleResetPlanning = useCallback(() => {
+    setPlanningStarted(false);
+    setPickupLocation(null);
+    setPickupAddress('');
+    setDropoffLocation(null);
+    setDropoffAddress('');
+    setStops([]);
+    // Reset map to user location if available
+    if (userLocation) {
+      setMapBounds(userLocation);
+      setFlyToTrigger(prev => prev + 1);
+    }
+  }, [userLocation]);
+
   const handlePickupChange = useCallback((loc: [number, number] | null, addr?: string) => {
     if (loc) setPickupLocation(loc);
     if (addr) setPickupAddress(addr);
@@ -444,7 +458,7 @@ export default function App() {
                   <RideRequestSheet
                     session={session}
                     initialPlanning={planningStarted}
-                    onPlanningClose={() => setPlanningStarted(false)}
+                    onPlanningClose={handleResetPlanning}
                     pickupLocation={pickupLocation}
                     pickupAddress={pickupAddress}
                     dropoffLocation={dropoffLocation}
