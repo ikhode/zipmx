@@ -741,5 +741,4 @@ app.post('/payments/webhook', async (c) => {
   return c.text('OK');
 });
 
-export { LocationTracker } from './LocationTracker';
 export const onRequest = handle(app);

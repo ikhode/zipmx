@@ -1,0 +1,12 @@
+name = "zipp-location-tracker"
+main = "src/index.ts"
+compatibility_date = "2024-04-03"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "LOCATION_TRACKER"
+class_name = "LocationTracker"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LocationTracker"]

@@ -79,3 +79,9 @@ export class LocationTracker {
     });
   }
 }
+
+export default {
+  async fetch(request: Request, env: any) {
+    return new Response('Location Tracker Worker is running', { status: 200 });
+  }
+};
