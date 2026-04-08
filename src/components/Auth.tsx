@@ -75,7 +75,6 @@ export function Auth() {
         <div className="auth-header">
            <div className="auth-logo-badge">Z</div>
            <h1 className="brand" style={{ fontSize: '32px', letterSpacing: '-1px' }}>ZIPP</h1>
-           <p className="brand-tagline">Moviendo a Tecomán con tecnología</p>
         </div>
 
         <div className="auth-form-wrapper stagger-in">
@@ -106,40 +105,50 @@ export function Auth() {
           {step === 'otp' && (
             <form onSubmit={handleVerifyOTP} className="auth-form-internal">
               <h2 className="minimal-title-md">Verifica tu número</h2>
-              <p className="minimal-desc-xs">Enviamos un código al {phone}</p>
+              <p className="minimal-desc-xs">Hemos enviado un código SMS al {phone}</p>
               
               <div className="form-group-premium otp-group">
                 <input
                   type="text"
-                  placeholder="· · · · · ·"
+                  placeholder="0 0 0 0 0 0"
                   value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '');
+                    setOtp(val);
+                    if (val.length === 6) {
+                       // Trigger verify automatically
+                       setTimeout(() => {
+                         const form = e.target.closest('form');
+                         if (form) form.requestSubmit();
+                       }, 100);
+                    }
+                  }}
                   maxLength={6}
-                  style={{ textAlign: 'center', letterSpacing: '8px', fontSize: '24px' }}
+                  className="otp-input-field"
                   autoFocus
                   required
                 />
               </div>
 
               <button type="submit" className="confirm-primary-btn" disabled={loading || otp.length < 6}>
-                {loading ? '...' : 'VERIFICAR'}
+                {loading ? 'VERIFICANDO...' : 'VERIFICAR CÓDIGO'}
               </button>
               
-              <button type="button" className="text-btn-minimal" onClick={() => setStep('phone')} style={{ marginTop: '12px' }}>
-                Cambiar número
+              <button type="button" className="text-btn-minimal" onClick={() => { triggerHaptic('light'); setStep('phone'); }} style={{ marginTop: '12px' }}>
+                ¿Número incorrecto? Cambiar
               </button>
             </form>
           )}
 
           {step === 'signup' && (
             <form onSubmit={handleSignup} className="auth-form-internal">
-              <h2 className="minimal-title-md">¡Casi listo!</h2>
-              <p className="minimal-desc-xs">Completa tu perfil para empezar</p>
+              <h2 className="minimal-title-md">¡Bienvenido a Zipp!</h2>
+              <p className="minimal-desc-xs">Solo necesitamos unos datos básicos para crear tu cuenta</p>
               
               <div className="form-group-premium">
                 <input
                   type="text"
-                  placeholder="Nombre Completo"
+                  placeholder="Tu nombre completo"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   required
