@@ -276,11 +276,12 @@ class APIClient {
     return res;
   }
 
-  static async createPaymentPreference(amount: number, paymentMethod: string, description?: string) {
-    return await this.request('/payments/create', {
-      method: 'POST',
-      body: JSON.stringify({ amount, paymentMethod, description }),
+  static async deleteAccount() {
+    const res = await this.request('/profile', {
+      method: 'DELETE',
     });
+    this.logout();
+    return res;
   }
 
   static logout() {

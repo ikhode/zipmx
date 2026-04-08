@@ -46,6 +46,29 @@ const MemoizedMapView = React.memo(MapView);
 
 const DEFAULT_LOCATION: [number, number] = [18.9113, -103.8743];
 
+const PrivacyNotice = ({ onAccept }: { onAccept: () => void }) => (
+  <div className="privacy-notice-overlay fade-in">
+    <div className="privacy-card-premium stagger-in">
+      <div className="privacy-icon">📍</div>
+      <h3>Tu privacidad es clave</h3>
+      <p>
+        Zipp utiliza tu ubicación en <b>segundo plano</b> para:
+      </p>
+      <ul className="privacy-list">
+        <li>Conectarte con conductores cercanos.</li>
+        <li>Permitir el seguimiento del viaje en tiempo real por seguridad.</li>
+        <li>Calcular tarifas precisas basadas en la distancia.</li>
+      </ul>
+      <p className="privacy-footer">
+        Tus datos están protegidos y solo se usan para mejorar tu experiencia de movilidad.
+      </p>
+      <button className="confirm-primary-btn" onClick={onAccept}>
+        Entendido y aceptar
+      </button>
+    </div>
+  </div>
+);
+
 export default function App() {
   const { showToast } = useToast();
   const [session, setSession] = useState<{ user: APIUser } | null>(null);
@@ -60,6 +83,7 @@ export default function App() {
   // User's real GPS location
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [geoLoading, setGeoLoading] = useState(true);
+  const [privacyAccepted, setPrivacyAccepted] = useState(() => localStorage.getItem('zipp_privacy_accepted') === 'true');
   
   // Splash Screen State
   const [showSplash, setShowSplash] = useState(true);
@@ -594,14 +618,20 @@ export default function App() {
         </div>
       </BottomSheet>
 
-      <BottomSheet
-        isOpen={showAuthSheet}
-        onClose={() => setShowAuthSheet(null as any)}
-        snapPoints={[0.85]}
-        initialSnap={0}
-      >
-        <Auth />
-      </BottomSheet>
+      {showAuthSheet && (
+        <BottomSheet
+          isOpen={!!showAuthSheet}
+          onClose={() => setShowAuthSheet(false)}
+          snapPoints={[0.85]}
+          initialSnap={0}
+        >
+          <Auth 
+            onSuccess={(user) => { setSession({ user }); setShowAuthSheet(false); }}
+            onClose={() => setShowAuthSheet(false)}
+            initialMode={quickAuthType}
+          />
+        </BottomSheet>
+      )}
 
       <BottomSheet
         isOpen={!!showVerificationSheet}
@@ -630,6 +660,13 @@ export default function App() {
               <div className="splash-loader-bar"><div className="splash-loader-progress"></div></div>
            </div>
         </div>
+      )}
+
+      {(!privacyAccepted && !showSplash) && (
+        <PrivacyNotice onAccept={() => {
+          localStorage.setItem('zipp_privacy_accepted', 'true');
+          setPrivacyAccepted(true);
+        }} />
       )}
     </div>
   );

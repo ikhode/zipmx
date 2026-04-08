@@ -284,11 +284,50 @@ app.post('/auth/signup', async (c) => {
   }
 });
 
+// Profile Management (Mandatory for Store Approval)
+app.get('/profile', authGuard, async (c) => {
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const db = drizzle(c.env.DB, { schema });
+  const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
+  if (!user) return c.json({ error: 'Usuario no encontrado' }, 404);
+  return c.json(user);
+});
+
+app.patch('/profile', authGuard, async (c) => {
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const data = await c.req.json();
+  const db = drizzle(c.env.DB, { schema });
+  
+  await db.update(schema.users)
+    .set({ ...data, updatedAt: new Date().toISOString() })
+    .where(eq(schema.users.id, payload.id));
+    
+  const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
+  return c.json(user);
+});
+
+app.delete('/profile', authGuard, async (c) => {
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const db = drizzle(c.env.DB, { schema });
+  
+  // Complex deletion logic: anonymize or delete data
+  // For now, permanent deletion as requested by Apple
+  await db.delete(schema.users).where(eq(schema.users.id, payload.id));
+  await db.delete(schema.drivers).where(eq(schema.drivers.id, payload.id));
+  
+  return c.json({ success: true, message: 'Cuenta eliminada exitosamente' });
+});
+
 // OTP Auth Endpoints
 app.post('/auth/send-otp', async (c) => {
   const { phone } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
   
+  // App Store Reviewer Bypass
+  if (phone === '+520000000000') {
+    return c.json({ success: true, message: 'Código enviado con éxito (Reviewer Mode)' });
+  }
+
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
@@ -308,6 +347,26 @@ app.post('/auth/verify-otp', async (c) => {
   try {
     const { phone, code } = await c.req.json();
     const db = drizzle(c.env.DB, { schema });
+
+    // App Store Reviewer Bypass
+    if (phone === '+520000000000' && code === '123456') {
+      let user = await db.query.users.findFirst({ where: eq(schema.users.phone, phone) });
+      if (!user) {
+        const newUser = await db.insert(schema.users).values({
+          email: 'reviewer@zipp.app',
+          phone,
+          fullName: 'App Store Reviewer',
+          userType: 'passenger',
+          verified: true
+        }).returning();
+        user = newUser[0];
+      }
+      
+      const secret = getSecret(c);
+      const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
+      const token = await sign(payload, secret, 'HS256');
+      return c.json({ success: true, user, token });
+    }
 
     const record = await db.query.verificationCodes.findFirst({
       where: and(

@@ -3,7 +3,13 @@ import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
 import { useState } from 'react';
 
-export function Auth() {
+interface AuthProps {
+  onSuccess?: (user: any) => void;
+  onClose?: () => void;
+  initialMode?: 'passenger' | 'driver';
+}
+
+export function Auth({ onSuccess, onClose, initialMode }: AuthProps) {
     const { showToast } = useToast();
     const [loading, setLoading] = useState(false);
     const [step, setStep] = useState<'phone' | 'otp' | 'signup'>('phone');
@@ -39,7 +45,8 @@ export function Auth() {
           setStep('signup');
         } else {
           showToast('¡Bienvenido de vuelta!', 'success');
-          setTimeout(() => window.location.reload(), 1000);
+          if (onSuccess) onSuccess(res.user);
+          else setTimeout(() => window.location.reload(), 1000);
         }
       } catch (err: any) {
         showToast(err.message, 'error');
@@ -53,15 +60,16 @@ export function Auth() {
       setLoading(true);
       triggerHaptic('success');
       try {
-        await APIClient.signup({
+        const user = await APIClient.signup({
           email,
           phone,
           fullName,
-          userType: 'passenger',
+          userType: initialMode || 'passenger',
           password: 'zipp-otp-auth-' + Math.random()
         });
         showToast('¡Cuenta creada!', 'success');
-        setTimeout(() => window.location.reload(), 1000);
+        if (onSuccess) onSuccess(user);
+        else setTimeout(() => window.location.reload(), 1000);
       } catch (err: any) {
         showToast(err.message, 'error');
       } finally {
@@ -73,6 +81,15 @@ export function Auth() {
     <div className="auth-container premium-card-anim">
       <div className="auth-card">
         <div className="auth-header">
+           {onClose && (
+            <button 
+              onClick={onClose} 
+              className="auth-close-btn"
+              style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', fontSize: '24px', opacity: 0.3, cursor: 'pointer' }}
+            >
+              ✕
+            </button>
+           )}
            <div className="auth-logo-badge">Z</div>
            <h1 className="brand" style={{ fontSize: '32px', letterSpacing: '-1px' }}>ZIPP</h1>
         </div>

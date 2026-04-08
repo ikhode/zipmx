@@ -204,7 +204,7 @@ const SettingsView: React.FC<{ session: any, onBack: () => void, onVerify?: () =
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section" style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', paddingLeft: '8px' }}>Preferencias</h3>
         <div className="settings-list-premium" style={{ background: '#F8FAFC', borderRadius: '24px', overflow: 'hidden' }}>
           {[
@@ -228,6 +228,43 @@ const SettingsView: React.FC<{ session: any, onBack: () => void, onVerify?: () =
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="settings-section">
+        <h3 style={{ fontSize: '13px', fontWeight: 800, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', paddingLeft: '8px' }}>Zona de Peligro</h3>
+        <div className="settings-list-premium" style={{ background: '#FFF1F2', borderRadius: '24px', overflow: 'hidden', border: '1px solid #FECACA' }}>
+          <div className="settings-item-premium interactive-scale" 
+            onClick={async () => {
+              triggerHaptic('error');
+              if (window.confirm('¿Estás COMPLETAMENTE seguro? Esta acción borrará todos tus viajes, saldo y datos permanentemente y no se puede deshacer.')) {
+                if (window.confirm('Confirmación final: ¿Realmente deseas eliminar tu cuenta de ZIPP?')) {
+                  try {
+                    await APIClient.deleteAccount();
+                    showToast('Cuenta eliminada correctamente', 'success');
+                    window.location.reload();
+                  } catch (e: any) {
+                    showToast(e.message, 'error');
+                  }
+                }
+              }
+            }}
+            style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              padding: '20px', 
+              cursor: 'pointer'
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '18px' }}>🗑️</span>
+              <span style={{ fontWeight: 800, fontSize: '15px', color: '#B91C1C' }}>Eliminar mi cuenta</span>
+            </div>
+            <span style={{ opacity: 0.3, color: '#B91C1C' }}>›</span>
+          </div>
+        </div>
+        <p style={{ padding: '16px', fontSize: '12px', color: '#991B1B', fontWeight: 600, opacity: 0.7 }}>
+          Al eliminar tu cuenta, todos tus datos personales serán borrados de nuestros servidores según nuestra política de privacidad exigida por Apple.
+        </p>
       </div>
     </div>
   );
