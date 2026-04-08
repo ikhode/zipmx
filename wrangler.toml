@@ -19,4 +19,4 @@ new_classes = ["LocationTracker"]
 
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "zipp_storage"
+bucket_name = "zipp-storage"
