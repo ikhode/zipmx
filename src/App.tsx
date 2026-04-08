@@ -81,6 +81,7 @@ export default function App() {
   const [hasActiveRide, setHasActiveRide] = useState(false);
   const [showVerificationSheet, setShowVerificationSheet] = useState<{ type: 'passenger' | 'driver' } | null>(null);
   const [showQuickAuth, setShowQuickAuth] = useState(false);
+  const [showAuthSheet, setShowAuthSheet] = useState(false);
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
   const [flyToTrigger, setFlyToTrigger] = useState(0);
   const [driverIsOnline, setDriverIsOnline] = useState(false);
@@ -96,11 +97,14 @@ export default function App() {
 
   const onLoginRequired = (type: 'passenger' | 'driver') => {
     setQuickAuthType(type);
-    setShowQuickAuth(true);
+    setShowAuthSheet(true);
     triggerHaptic('medium');
   };
 
-  const handleOpenAuth = useCallback(() => onLoginRequired('passenger'), []);
+  const handleOpenAuth = useCallback(() => {
+    setShowAuthSheet(true);
+    triggerHaptic('medium');
+  }, []);
 
   // --- Geolocation: get user's real position and track it ---
   useEffect(() => {
@@ -394,13 +398,13 @@ export default function App() {
               <>
                 <button 
                   className="zipp-login-link interactive-scale" 
-                  onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
+                  onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}
                 >
                   Inicia sesión
                 </button>
                 <button 
                   className="zipp-signup-btn interactive-scale" 
-                  onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
+                  onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}
                 >
                   Regístrate
                 </button>
@@ -451,7 +455,7 @@ export default function App() {
                     <div className="guest-cta-minimal fade-in">
                       <span className="pill-badge">Explora Zipp</span>
                       <p>Identifícate para proteger tu viaje y ver precios exactos</p>
-                      <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}>INICIAR SESIÓN</button>
+                       <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}>INICIAR SESIÓN</button>
                     </div>
                   )}
                   
@@ -510,7 +514,7 @@ export default function App() {
           onClose={() => setShowQuickAuth(false)}
           onShowFullAuth={() => {
             setShowQuickAuth(false);
-            setShowModeSelector(true);
+            setShowAuthSheet(true);
           }}
         />
       )}
@@ -581,15 +585,22 @@ export default function App() {
           </div>
           
           <div className="auth-footer-minimal">
-            {!session ? (
-              <Auth />
-            ) : (
+            {session && (
               <button className="cancel-link-btn interactive-scale" onClick={() => { triggerHaptic('medium'); APIClient.logout(); window.location.reload(); }}>
                 Cerrar Sesión
               </button>
             )}
           </div>
         </div>
+      </BottomSheet>
+
+      <BottomSheet
+        isOpen={showAuthSheet}
+        onClose={() => setShowAuthSheet(null as any)}
+        snapPoints={[0.85]}
+        initialSnap={0}
+      >
+        <Auth />
       </BottomSheet>
 
       <BottomSheet
