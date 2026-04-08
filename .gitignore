@@ -38,3 +38,12 @@ yarn-error.log*
 
 # Types
 *.tsbuildinfo
+
+# Cloudflare D1 and Local DB
+*.sqlite
+*.sqlite3
+*-wal
+*-shm
+
+# Cloudflare Pages / Workers
+.cloudflare/
