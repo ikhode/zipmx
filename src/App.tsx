@@ -525,6 +525,11 @@ export default function App() {
           hasActiveRide={hasActiveRide}
           onClose={handleAccountMenuClose} 
           onSwitchMode={handleSwitchMode}
+          onVerifyIdentity={() => {
+            setShowAccountMenu(false);
+            setShowVerificationSheet({ type: mode as 'passenger' | 'driver' });
+          }}
+          onUserUpdate={(user) => setSession({ user })}
         />
       </BottomSheet>
 

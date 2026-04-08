@@ -9,6 +9,8 @@ interface AccountMenuSheetProps {
   hasActiveRide: boolean;
   onSwitchMode: () => void;
   onClose: () => void;
+  onVerifyIdentity?: () => void;
+  onUserUpdate?: (user: any) => void;
 }
 
 type ViewType = 'menu' | 'wallet' | 'trips' | 'help' | 'settings' | 'zipp-pro' | 'safety';
@@ -59,18 +61,43 @@ const TripsView: React.FC<{ onBack: () => void, onClose: () => void }> = ({ onBa
   </div>
 );
 
-const SettingsView: React.FC<{ session: any, onBack: () => void }> = ({ session, onBack }) => {
+const SettingsView: React.FC<{ session: any, onBack: () => void, onVerify?: () => void, onUserUpdate?: (user: any) => void }> = ({ session, onBack, onVerify, onUserUpdate }) => {
   const user = session?.user;
   const { showToast } = useToast();
+  
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const menuItems = [
-    { icon: '👤', label: 'Datos personales', value: user?.fullName },
-    { icon: '📧', label: 'Email', value: user?.email },
-    { icon: '📞', label: 'Teléfono', value: user?.phone },
-    { icon: '🛡️', label: 'Estado de cuenta', value: user?.verified ? 'Verificada' : 'Pendiente de verificación', color: user?.verified ? '#10B981' : '#F59E0B' }
+  const handleEdit = (field: string, value: string) => {
+    triggerHaptic('light');
+    setEditingField(field);
+    setEditValue(value);
+  };
+
+  const handleSave = async () => {
+    if (!editingField) return;
+    setIsSaving(true);
+    triggerHaptic('medium');
+    
+    try {
+      const updatedUser = await APIClient.updateProfile({ [editingField]: editValue });
+      if (onUserUpdate) onUserUpdate(updatedUser);
+      setEditingField(null);
+      showToast('Perfil actualizado correctamente', 'success');
+    } catch (error: any) {
+      showToast(error.message || 'Error al actualizar perfil', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const profileItems = [
+    { id: 'fullName', icon: '👤', label: 'Datos personales', value: user?.fullName },
+    { id: 'email', icon: '📧', label: 'Email', value: user?.email },
   ];
 
-  const handleAction = (label: string) => {
+  const handlePreferenceAction = (label: string) => {
     triggerHaptic('light');
     showToast(`${label} estará disponible en la próxima actualización`, 'info');
   };
@@ -82,21 +109,98 @@ const SettingsView: React.FC<{ session: any, onBack: () => void }> = ({ session,
       <div className="settings-section" style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', paddingLeft: '8px' }}>Perfil</h3>
         <div className="settings-list-premium" style={{ background: '#F8FAFC', borderRadius: '24px', overflow: 'hidden' }}>
-          {menuItems.map((item, i) => (
+          {profileItems.map((item, i) => (
             <div key={i} className="settings-item-premium" style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center', 
               padding: '16px 20px', 
-              borderBottom: i < menuItems.length - 1 ? '1px solid #F1F5F9' : 'none' 
+              borderBottom: '1px solid #F1F5F9' 
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span>{item.icon}</span>
-                <span style={{ fontWeight: 700, fontSize: '14px' }}>{item.label}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: editingField === item.id ? '12px' : '0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '18px' }}>{item.icon}</span>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>{item.label}</span>
+                    {editingField !== item.id && <span style={{ fontSize: '14px', fontWeight: 600, color: '#64748B' }}>{item.value}</span>}
+                  </div>
+                </div>
+                {editingField !== item.id ? (
+                  <button 
+                    onClick={() => handleEdit(item.id, item.value || '')}
+                    style={{ background: '#F3F4F6', border: 'none', padding: '6px 12px', borderRadius: '100px', fontSize: '12px', fontWeight: 800, color: 'var(--text)' }}
+                  >
+                    Editar
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button 
+                      onClick={() => setEditingField(null)}
+                      style={{ background: 'white', border: '1px solid #E2E8F0', padding: '6px 12px', borderRadius: '100px', fontSize: '12px', fontWeight: 800 }}
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      onClick={handleSave}
+                      disabled={isSaving}
+                      style={{ background: 'black', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '100px', fontSize: '12px', fontWeight: 800, opacity: isSaving ? 0.5 : 1 }}
+                    >
+                      {isSaving ? '...' : 'Guardar'}
+                    </button>
+                  </div>
+                )}
               </div>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: item.color || '#64748B' }}>{item.value}</span>
+              {editingField === item.id && (
+                <input 
+                  autoFocus
+                  className="premium-input-minimal fade-in"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  style={{ width: '100%', padding: '12px', borderRadius: '12px', border: '2px solid #000', outline: 'none', fontWeight: 700, fontSize: '15px' }}
+                />
+              )}
             </div>
           ))}
+
+          {/* Phone - Read only usually */}
+          <div className="settings-item-premium" style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            padding: '16px 20px', 
+            borderBottom: '1px solid #F1F5F9' 
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '18px' }}>📞</span>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>Teléfono</span>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#64748B' }}>{user?.phone}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Verification Status */}
+          <div className="settings-item-premium" style={{ 
+            padding: '16px 20px', 
+            background: user?.verified ? 'transparent' : '#FFFBEB'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '18px' }}>🛡️</span>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>Estado de cuenta</span>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: user?.verified ? '#10B981' : '#D97706' }}>
+                    {user?.verified ? 'Cuenta verificada ✓' : 'Pendiente de verificación'}
+                  </span>
+                </div>
+              </div>
+              {!user?.verified && (
+                <button 
+                  onClick={() => { triggerHaptic('medium'); if (onVerify) onVerify(); }}
+                  style={{ background: '#000', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '100px', fontSize: '12px', fontWeight: 900, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                >
+                  Verificar ahora
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -108,7 +212,7 @@ const SettingsView: React.FC<{ session: any, onBack: () => void }> = ({ session,
             { icon: '💳', label: 'Métodos de pago' },
             { icon: '🔒', label: 'Privacidad y datos' }
           ].map((item, i) => (
-            <div key={i} className="settings-item-premium interactive-scale" onClick={() => handleAction(item.label)} style={{ 
+            <div key={i} className="settings-item-premium interactive-scale" onClick={() => handlePreferenceAction(item.label)} style={{ 
               display: 'flex', 
               justifyContent: 'space-between', 
               alignItems: 'center', 
@@ -388,7 +492,15 @@ const MainMenuView: React.FC<{
 
 // --- MAIN WRAPPER COMPONENT ---
 
-export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({ session, currentMode, hasActiveRide, onSwitchMode, onClose }) => {
+export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({ 
+  session, 
+  currentMode, 
+  hasActiveRide, 
+  onSwitchMode, 
+  onClose, 
+  onVerifyIdentity, 
+  onUserUpdate 
+}) => {
   const [view, setView] = useState<ViewType>('menu');
   const userName = session?.user?.fullName || 'Invitado';
 
@@ -422,13 +534,18 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({ session, cur
       case 'safety':
         return <SafetyView onBack={() => handleAction('help')} />;
       case 'settings':
-        return <SettingsView session={session} onBack={handleBack} />;
+        return <SettingsView 
+                  session={session} 
+                  onBack={handleBack} 
+                  onVerify={onVerifyIdentity} 
+                  onUserUpdate={onUserUpdate}
+                />;
       case 'zipp-pro':
         return <ZippProView onBack={handleBack} />;
       default:
         return null;
     }
-  }, [view, userName, currentMode, hasActiveRide, onSwitchMode, onClose]);
+  }, [view, userName, currentMode, hasActiveRide, onSwitchMode, onClose, session, onVerifyIdentity, onUserUpdate]);
 
   return (
     <div className="account-menu-sheet-container" style={{ padding: '24px', minHeight: '80vh', display: 'flex', flexDirection: 'column' }}>

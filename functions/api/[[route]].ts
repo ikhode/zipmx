@@ -250,6 +250,27 @@ app.get('/profile', authGuard, async (c) => {
   return c.json(user);
 });
 
+app.patch('/profile', authGuard, async (c) => {
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const { fullName, email } = await c.req.json();
+  const db = drizzle(c.env.DB, { schema });
+  
+  const updateData: any = { updatedAt: new Date().toISOString() };
+  if (fullName) updateData.fullName = fullName;
+  if (email) updateData.email = email;
+
+  try {
+    await db.update(schema.users).set(updateData).where(eq(schema.users.id, payload.id));
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
+    return c.json(user);
+  } catch (error: any) {
+    if (error.message.includes('UNIQUE')) {
+      return c.json({ error: 'El correo electrónico ya está en uso.' }, 409);
+    }
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 // Passenger Rides
 app.get('/rides/my', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;

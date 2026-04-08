@@ -136,6 +136,13 @@ class APIClient {
     }
   }
 
+  static async updateProfile(data: Partial<APIUser>) {
+    return await this.request('/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Passenger methods
   static async getMyRides() {
     return await this.request('/rides/my');
