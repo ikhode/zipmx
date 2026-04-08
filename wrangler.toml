@@ -8,3 +8,15 @@ binding = "DB"
 database_name = "zipp_database"
 database_id = "8a89a445-7646-414d-9aad-4e0d973d0f7b"
 migrations_dir = "./drizzle"
+
+[[durable_objects.bindings]]
+name = "LOCATION_TRACKER"
+class_name = "LocationTracker"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["LocationTracker"]
+
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "zipp_storage"

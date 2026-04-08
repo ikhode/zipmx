@@ -14,6 +14,17 @@ export function VerificationSheet({ type, onComplete }: VerificationSheetProps) 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   
+  const dataURItoBlob = (dataURI: string) => {
+    const byteString = atob(dataURI.split(',')[1]);
+    const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([ab], { type: mimeString });
+  };
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -54,28 +65,41 @@ export function VerificationSheet({ type, onComplete }: VerificationSheetProps) 
     }
   };
 
-  const submitVerification = async (profile: string, id: string | null) => {
+  const submitVerification = async (profileData: string, idData: string | null) => {
     setStep('processing');
     setIsSubmitting(true);
     try {
-      // Validamos con Cloudflare AI
+      // 1. Upload to R2
+      const profileBlob = dataURItoBlob(profileData);
+      const profileFile = new File([profileBlob], `profile_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const profileRes = await APIClient.uploadFile(profileFile);
+      
+      let idUrl = null;
+      if (idData) {
+        const idBlob = dataURItoBlob(idData);
+        const idFile = new File([idBlob], `id_${Date.now()}.jpg`, { type: 'image/jpeg' });
+        const idRes = await APIClient.uploadFile(idFile);
+        idUrl = idRes.url;
+      }
+
+      // 2. Original Verification with URLs
       const result = await APIClient.verifyIdentity({
-        profilePhoto: profile,
-        idPhoto: id,
+        profilePhoto: profileRes.url,
+        idPhoto: idUrl,
         type: type
       });
 
-      if (result.success) {
+      if (Object.keys(result).includes('success') && result.success) {
         onComplete(result.user);
       } else {
-        showToast('La validación de identidad falló: ' + result.message, 'error');
+        showToast('Validación fallida: ' + (result.message || 'Error desconocido'), 'error');
         setStep('info');
       }
-    } catch (error) {
-      showToast('Error en el proceso de verificación', 'error');
+    } catch (error: any) {
+      console.error('Verification Error:', error);
+      showToast('Error en el proceso de verificación: ' + error.message, 'error');
       setStep('info');
     } finally {
-
       setIsSubmitting(false);
     }
   };

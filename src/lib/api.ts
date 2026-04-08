@@ -236,6 +236,46 @@ class APIClient {
     });
   }
 
+  static async uploadFile(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const url = `/api/upload`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...(this.token ? { 'Authorization': `Bearer ${this.token}` } : {}),
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Error al subir archivo');
+    }
+
+    return await response.json();
+  }
+
+  static async sendOTP(phone: string) {
+    return await this.request('/auth/send-otp', {
+      method: 'POST',
+      body: JSON.stringify({ phone })
+    });
+  }
+
+  static async verifyOTP(phone: string, code: string) {
+    const res = await this.request('/auth/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ phone, code })
+    });
+    if (res.token) {
+        this.token = res.token;
+        localStorage.setItem('zipp_token', res.token);
+    }
+    return res;
+  }
+
   static async createPaymentPreference(amount: number, paymentMethod: string, description?: string) {
     return await this.request('/payments/create', {
       method: 'POST',

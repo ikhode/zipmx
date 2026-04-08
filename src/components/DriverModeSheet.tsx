@@ -7,6 +7,7 @@ interface DriverModeSheetProps {
   session: any;
   onActiveRideChange?: (active: boolean) => void;
   onLoginRequired: () => void;
+  onOnlineChange?: (online: boolean) => void;
 }
 
 type VehicleType = 'car' | 'motorcycle' | 'bicycle' | 'rickshaw' | 'taxi' | 'skates';
@@ -48,7 +49,7 @@ const RideCard = React.memo(({ ride, onAccept, onArrive, onStart, onComplete }: 
   );
 });
 
-export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }: DriverModeSheetProps) {
+export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange }: DriverModeSheetProps) {
   const { showToast } = useToast();
   const [rides, setRides] = useState<APIRide[]>([]);
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
@@ -58,6 +59,10 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired }
   }, [activeRide, onActiveRideChange]);
   
   const [isOnline, setIsOnline] = useState(false);
+  
+  useEffect(() => {
+    onOnlineChange?.(isOnline);
+  }, [isOnline, onOnlineChange]);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
   const [loading, setLoading] = useState(false);

@@ -103,3 +103,12 @@ export const promotions = sqliteTable('promotions', {
   isActive: integer('is_active', { mode: 'boolean' }).default(true),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
 });
+
+export const verificationCodes = sqliteTable('verification_codes', {
+  id: integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }),
+  phone: text('phone').notNull(),
+  code: text('code').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  used: integer('used', { mode: 'boolean' }).default(false),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
+});

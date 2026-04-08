@@ -6,9 +6,11 @@ import { jwt, sign } from 'hono/jwt';
 import * as schema from '../../src/db/schema';
 
 type Bindings = {
-  DB: D1Database;
+  DB: any;
   JWT_SECRET: string;
   MERCADOPAGO_ACCESS_TOKEN: string;
+  LOCATION_TRACKER: any;
+  STORAGE: any; // R2 Bucket
 };
 
 type JWTPayload = {
@@ -27,7 +29,23 @@ const getSecret = (c: any): string => {
   return 'dev-secret-keep-it-safe-never-use-in-prod';
 };
 
+const authGuard = (c: any, next: any) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
+
 app.get('/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }));
+
+// WebSocket Entry point
+app.all('/ws', async (c) => {
+  const upgradeHeader = c.req.header('Upgrade');
+  if (upgradeHeader !== 'websocket') {
+    return c.text('Expected Upgrade: websocket', 426);
+  }
+
+  // Get a single global instance for simplicity in this project
+  const id = c.env.LOCATION_TRACKER.idFromName('global');
+  const obj = c.env.LOCATION_TRACKER.get(id);
+
+  return obj.fetch(c.req.raw);
+});
 
 // Geocoding Proxy
 app.get('/geocoding/address', async (c) => {
@@ -131,6 +149,48 @@ app.get('/geocoding/reverse', async (c) => {
   }
 });
 
+// Storage Endpoints (R2)
+app.post('/upload', authGuard, async (c) => {
+  try {
+    const payload = c.get('jwtPayload') as JWTPayload;
+    const body = await c.req.parseBody();
+    const file = body['file'] as any; // File object
+
+    if (!file || !file.name) return c.json({ error: 'Archivo no válido' }, 400);
+
+    const fileName = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+    const key = `uploads/${payload.id}/${fileName}`;
+
+    await c.env.STORAGE.put(key, await file.arrayBuffer(), {
+      httpMetadata: { contentType: file.type || 'application/octet-stream' }
+    });
+
+    const url = `/api/files/${key}`;
+    return c.json({ url, key });
+  } catch (err: any) {
+    return c.json({ error: `Error al subir: ${err.message}` }, 500);
+  }
+});
+
+app.get('/files/:path{.+}', async (c) => {
+  const path = c.req.param('path');
+  try {
+    const object = await c.env.STORAGE.get(path);
+    if (!object) return c.notFound();
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('etag', object.httpEtag);
+    
+    // Cache for 1 day
+    headers.set('Cache-Control', 'public, max-age=86400');
+
+    return c.body(object.body, 200, Object.fromEntries(headers.entries()));
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
 // Routing Proxy (OSRM) to avoid CORS
 app.get('/routing/route', async (c) => {
   const coords = c.req.query('coords'); // format: "lon1,lat1;lon2,lat2"
@@ -224,6 +284,66 @@ app.post('/auth/signup', async (c) => {
   }
 });
 
+// OTP Auth Endpoints
+app.post('/auth/send-otp', async (c) => {
+  const { phone } = await c.req.json();
+  const db = drizzle(c.env.DB, { schema });
+  
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+  await db.insert(schema.verificationCodes).values({
+    phone,
+    code,
+    expiresAt
+  });
+
+  // Mock SMS sending (In production combine with Twilio/Sinfonia)
+  console.log(`\x1b[33m[OTP SERVICE]\x1b[0m Enviando código \x1b[1m${code}\x1b[0m al teléfono ${phone}`);
+  
+  return c.json({ success: true, message: 'Código enviado con éxito' });
+});
+
+app.post('/auth/verify-otp', async (c) => {
+  try {
+    const { phone, code } = await c.req.json();
+    const db = drizzle(c.env.DB, { schema });
+
+    const record = await db.query.verificationCodes.findFirst({
+      where: and(
+        eq(schema.verificationCodes.phone, phone),
+        eq(schema.verificationCodes.code, code),
+        eq(schema.verificationCodes.used, false)
+      ),
+      orderBy: desc(schema.verificationCodes.createdAt)
+    });
+
+    if (!record || record.expiresAt < Date.now()) {
+      return c.json({ error: 'Código inválido o expirado' }, 400);
+    }
+
+    // Mark as used
+    await db.update(schema.verificationCodes)
+      .set({ used: true })
+    .where(eq(schema.verificationCodes.id, record.id));
+
+    // Find user and return token
+    const user = await db.query.users.findFirst({ where: eq(schema.users.phone, phone) });
+    
+    if (!user) {
+      return c.json({ success: true, isNewUser: true });
+    }
+
+    const secret = getSecret(c);
+    const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
+    const token = await sign(payload, secret, 'HS256');
+
+    return c.json({ success: true, user, token });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
 
 app.post('/auth/login', async (c) => {
   const { email } = await c.req.json();
@@ -239,8 +359,6 @@ app.post('/auth/login', async (c) => {
     return c.json({ error: error.message }, 500);
   }
 });
-
-const authGuard = (c: any, next: any) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
 
 // Profile
 app.get('/profile', authGuard, async (c) => {
@@ -623,4 +741,5 @@ app.post('/payments/webhook', async (c) => {
   return c.text('OK');
 });
 
+export { LocationTracker } from './LocationTracker';
 export const onRequest = handle(app);

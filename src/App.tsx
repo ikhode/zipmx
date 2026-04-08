@@ -14,6 +14,8 @@ import { QuickAuthSplash } from './components/QuickAuthSplash';
 import { reverseGeocode, formatAddress } from './lib/geocoding';
 import { useToast } from './components/ToastProvider';
 import { triggerHaptic } from './lib/haptics';
+import { useLocationTracker } from './hooks/useLocationTracker';
+import { LegalPage } from './components/Legal';
 
 type AppMode = 'passenger' | 'driver';
 type SelectionType = 'none' | 'pickup' | 'dropoff' | { type: 'stop', index: number };
@@ -78,12 +80,19 @@ export default function App() {
   const [isHeaderHidden, setIsHeaderHidden] = useState(false);
   const [hasActiveRide, setHasActiveRide] = useState(false);
   const [showVerificationSheet, setShowVerificationSheet] = useState<{ type: 'passenger' | 'driver' } | null>(null);
-  const [nearbyDrivers, setNearbyDrivers] = useState<{ id: string; position: [number, number]; type: string }[]>([]);
-  const [mapBounds, setMapBounds] = useState<[number, number] | null>(DEFAULT_LOCATION);
   const [showQuickAuth, setShowQuickAuth] = useState(false);
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
   const [flyToTrigger, setFlyToTrigger] = useState(0);
+  const [driverIsOnline, setDriverIsOnline] = useState(false);
+  const [showLegal, setShowLegal] = useState<string | null>(null);
   const lastSelectionMode = React.useRef<SelectionType>('none');
+  
+  // Real-time Tracker
+  const { nearbyDrivers: realTimeDrivers, updateLocation } = useLocationTracker(
+    mode, 
+    session?.user?.id, 
+    mode === 'driver' && driverIsOnline
+  );
 
   const onLoginRequired = (type: 'passenger' | 'driver') => {
     setQuickAuthType(type);
@@ -109,7 +118,7 @@ export default function App() {
         // Auto-set pickup to current location if not set yet
         setPickupLocation((prevPickup) => {
           if (!prevPickup) {
-            setMapBounds(loc);
+            setFlyToTrigger(prev => prev + 1);
             reverseGeocode(loc[0], loc[1]).then((res) => {
               if (res) setPickupAddress(formatAddress(res));
               else setPickupAddress('Mi ubicación actual');
@@ -186,22 +195,14 @@ export default function App() {
     }
   }, [mode, showAccountMenu]);
 
-  // Nearby Drivers Polling
+  // Update driver location on server whenever userLocation changes and we are a driver
   useEffect(() => {
-    if (mode === 'passenger' && !hasActiveRide && mapBounds) {
-       const fetchNearby = () => {
-         APIClient.getNearbyDrivers(mapBounds[0], mapBounds[1]).then((res: any) => {
-            if (res.drivers) setNearbyDrivers(res.drivers);
-         });
-       };
-       fetchNearby();
-       const interval = setInterval(fetchNearby, 10000);
-       return () => clearInterval(interval);
-    } else {
-       // Clear drivers when not in passenger mode or ride active
-       setNearbyDrivers([]);
+    if (mode === 'driver' && driverIsOnline && userLocation) {
+       // Fetch vehicle type from somewhere or default to car
+       // For now using 'car', we might want to store this in state
+       updateLocation(userLocation[0], userLocation[1], 'car');
     }
-  }, [mode, hasActiveRide, mapBounds]);
+  }, [mode, driverIsOnline, userLocation, updateLocation]);
 
 
   // Set initial temp location when entering selection mode
@@ -258,7 +259,6 @@ export default function App() {
 
   const handleLocationSelected = useCallback((loc: [number, number]) => {
     setTempLocation(loc);
-    setMapBounds(loc);
   }, []);
 
   const confirmSelection = useCallback(() => {
@@ -317,7 +317,6 @@ export default function App() {
     setStops([]);
     // Reset map to user location if available
     if (userLocation) {
-      setMapBounds(userLocation);
       setFlyToTrigger(prev => prev + 1);
     }
   }, [userLocation]);
@@ -379,7 +378,7 @@ export default function App() {
           dropoffLocation={dropoffLocation || undefined}
           stops={stopPositions}
           selectingLocation={selectionMode !== 'none'}
-          nearbyDrivers={nearbyDrivers}
+          nearbyDrivers={mode === 'passenger' ? realTimeDrivers : []}
           onLocationSelected={handleLocationSelected}
           flyToTrigger={flyToTrigger}
         />
@@ -487,10 +486,22 @@ export default function App() {
                  session={session} 
                  onActiveRideChange={setHasActiveRide} 
                  onLoginRequired={() => onLoginRequired('driver')}
+                 onOnlineChange={setDriverIsOnline}
                />
              </div>
           )}
         </div>
+      )}
+
+      {showLegal && (
+        <BottomSheet
+          isOpen={!!showLegal}
+          onClose={() => setShowLegal(null)}
+          snapPoints={[0.9]}
+          initialSnap={0}
+        >
+          <LegalPage title={showLegal} onClose={() => setShowLegal(null)} />
+        </BottomSheet>
       )}
 
       {showQuickAuth && (
