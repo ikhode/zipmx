@@ -2503,3 +2503,67 @@ button:active {
   border: none;
   cursor: pointer;
 }
+
+/* --- AUTH PREMIUM EXTENSIONS --- */
+.social-auth-minimal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.google-btn-premium {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: white;
+  border: 1px solid var(--border);
+  padding: 14px;
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+  transition: var(--transition-smooth);
+}
+
+.google-btn-premium img {
+  width: 20px;
+  height: 20px;
+}
+
+.google-btn-premium:active {
+  background: var(--surface-alt);
+  transform: scale(0.98);
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 8px 0;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-light);
+}
+
+.auth-divider span {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.auth-form-internal .minimal-desc-xs {
+  color: var(--text-muted);
+  margin-bottom: 24px;
+  font-size: 14px;
+  font-weight: 600;
+}

@@ -339,67 +339,95 @@ app.post('/auth/send-otp', async (c) => {
 
   // Mock SMS sending (In production combine with Twilio/Sinfonia)
   console.log(`\x1b[33m[OTP SERVICE]\x1b[0m Enviando código \x1b[1m${code}\x1b[0m al teléfono ${phone}`);
-  
   return c.json({ success: true, message: 'Código enviado con éxito' });
 });
 
 app.post('/auth/verify-otp', async (c) => {
+  // Firebase ID Token Verification & Identity Sync
   try {
-    const { phone, code } = await c.req.json();
+    const { phone, idToken } = await c.req.json();
+    if (!idToken) return c.json({ error: 'Falta el Token de Identidad' }, 400);
+
     const db = drizzle(c.env.DB, { schema });
 
-    // App Store Reviewer Bypass
-    if (phone === '+520000000000' && code === '123456') {
-      let user = await db.query.users.findFirst({ where: eq(schema.users.phone, phone) });
-      if (!user) {
-        const newUser = await db.insert(schema.users).values({
-          email: 'reviewer@zipp.app',
-          phone,
-          fullName: 'App Store Reviewer',
-          userType: 'passenger',
-          verified: true
-        }).returning();
-        user = newUser[0];
-      }
-      
-      const secret = getSecret(c);
-      const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
-      const token = await sign(payload, secret, 'HS256');
-      return c.json({ success: true, user, token });
-    }
-
-    const record = await db.query.verificationCodes.findFirst({
-      where: and(
-        eq(schema.verificationCodes.phone, phone),
-        eq(schema.verificationCodes.code, code),
-        eq(schema.verificationCodes.used, false)
-      ),
-      orderBy: desc(schema.verificationCodes.createdAt)
-    });
-
-    if (!record || record.expiresAt < Date.now()) {
-      return c.json({ error: 'Código inválido o expirado' }, 400);
-    }
-
-    // Mark as used
-    await db.update(schema.verificationCodes)
-      .set({ used: true })
-    .where(eq(schema.verificationCodes.id, record.id));
-
-    // Find user and return token
-    const user = await db.query.users.findFirst({ where: eq(schema.users.phone, phone) });
+    // Decoding Base64URL to JSON (Hand-rolled for Cloudflare Worker environment)
+    const base64Url = idToken.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
     
+    const payload = JSON.parse(jsonPayload);
+
+    if (payload.iss !== `https://securetoken.google.com/zipp-mx` || payload.aud !== `zipp-mx`) {
+      return c.json({ error: 'Token de Firebase inválido' }, 401);
+    }
+
+    if (payload.exp < Date.now() / 1000) {
+      return c.json({ error: 'Token expirado' }, 401);
+    }
+
+    const firebaseUid = payload.sub;
+    const isAnonymous = payload.provider_id === 'anonymous' || (!payload.phone_number && !payload.email);
+    
+    // Determine the phone and email to store
+    const firebasePhone = payload.phone_number || null;
+    const firebaseEmail = payload.email || null;
+    
+    const storedPhone = firebasePhone || `anon_${firebaseUid.slice(0, 12)}`;
+    const storedEmail = firebaseEmail || `user_${firebaseUid.slice(0, 8)}@zipp.app`;
+
+    // 1. Try to find user by Firebase UID (sub)
+    let user = await db.query.users.findFirst({ where: eq(schema.users.id, firebaseUid) });
+    
+    // 2. If not found by UID, try by Phone (if not anonymous)
+    if (!user && firebasePhone) {
+       user = await db.query.users.findFirst({ where: eq(schema.users.phone, firebasePhone) });
+    }
+
     if (!user) {
-      return c.json({ success: true, isNewUser: true });
+      // Create new user record (with placeholder if anonymous)
+      const newUser = await db.insert(schema.users).values({
+        id: firebaseUid,
+        email: storedEmail,
+        phone: storedPhone,
+        fullName: payload.name || 'Usuario Zipp',
+        userType: 'passenger',
+        verified: !!firebasePhone
+      }).returning();
+      user = newUser[0];
+    } else {
+      // Check for account upgrade
+      const hasRealPhoneNow = !!firebasePhone;
+      const hadPlaceholder = user.phone.startsWith('anon_');
+      
+      if ((hadPlaceholder && hasRealPhoneNow) || (!user.email && firebaseEmail)) {
+        await db.update(schema.users)
+          .set({ 
+            phone: hasRealPhoneNow ? firebasePhone : user.phone,
+            email: firebaseEmail || user.email,
+            verified: hasRealPhoneNow ? true : user.verified,
+            updatedAt: new Date().toISOString()
+          })
+          .where(eq(schema.users.id, user.id));
+        
+        user = await db.query.users.findFirst({ where: eq(schema.users.id, user.id) });
+      }
     }
 
     const secret = getSecret(c);
-    const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
-    const token = await sign(payload, secret, 'HS256');
+    const jwtPayload: JWTPayload = { id: user!.id, email: user!.email || '', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
+    const token = await sign(jwtPayload, secret, 'HS256');
 
-    return c.json({ success: true, user, token });
+    return c.json({ 
+      success: true, 
+      user, 
+      token, 
+      isNewUser: user!.phone.startsWith('anon_') 
+    });
   } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+    console.error('Backend Firebase Integration Error:', err);
+    return c.json({ error: 'Error de sincronización de identidad', details: err.message }, 500);
   }
 });
 

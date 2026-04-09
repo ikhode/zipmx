@@ -9,12 +9,14 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "deploy": "cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 npm run build && cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 wrangler d1 migrations apply zipp_database --remote && cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 wrangler pages deploy dist --project-name zipp --branch produccion"
+    "deploy": "cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 npm run build && cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 wrangler d1 migrations apply zipp_database --remote && cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 wrangler pages deploy dist --project-name zipp --branch main"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.7.6",
     "@libsql/client": "^0.17.2",
     "drizzle-orm": "^0.45.2",
+    "firebase": "^12.12.0",
+    "google-auth-library": "^10.6.2",
     "hono": "^4.12.10",
     "leaflet": "^1.9.4",
     "react": "^18.2.0",

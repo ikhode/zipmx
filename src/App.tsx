@@ -19,6 +19,8 @@ import { useToast } from './components/ToastProvider';
 import { triggerHaptic } from './lib/haptics';
 import { useLocationTracker } from './hooks/useLocationTracker';
 import { LegalPage } from './components/Legal';
+import { auth } from './lib/firebase';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
 type AppMode = 'passenger' | 'driver';
 
@@ -195,10 +197,8 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // --- Hash Based Routing ---
   useEffect(() => {
-    APIClient.getProfile().then(user => setSession(user ? { user } : null));
-
-    // --- Hash Based Routing ---
     const handleHashSync = () => {
       const hash = window.location.hash;
       if (hash === '#/profile') {
@@ -222,6 +222,33 @@ export default function App() {
         window.removeEventListener('popstate', handleHashSync);
     };
   }, [handleOpenAuth]);
+
+  // --- Firebase Auth & Session Sync ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: any) => {
+      if (firebaseUser) {
+        try {
+          // Sync with backend using the ID token
+          const idToken = await firebaseUser.getIdToken();
+          // We use verifyOTP endpoint as a generic "sync" point if needed, 
+          // or a dedicated profile fetch that handles new users.
+          const user = await APIClient.verifyOTP(firebaseUser.phoneNumber || 'anonymous', idToken);
+          setSession({ user: user.user });
+        } catch (error) {
+          console.error('[SessionSync] Error:', error);
+        }
+      } else {
+        // No user? Sign in anonymously to ensure identity persists
+        try {
+          await signInAnonymously(auth);
+        } catch (error) {
+          console.error('[Auth] Anonymous SignIn failed:', error);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // Handle Splash Screen
   useEffect(() => {
@@ -667,7 +694,6 @@ export default function App() {
         >
           <Auth 
             onSuccess={(user) => { setSession({ user }); setShowAuthSheet(false); }}
-            onClose={() => setShowAuthSheet(false)}
             initialMode={quickAuthType}
           />
         </BottomSheet>

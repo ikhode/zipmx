@@ -257,21 +257,20 @@ class APIClient {
     return await response.json();
   }
 
-  static async sendOTP(phone: string) {
-    return await this.request('/auth/send-otp', {
-      method: 'POST',
-      body: JSON.stringify({ phone })
-    });
+  static async sendOTP(_phone: string) {
+    // This is now handled directly by Firebase SDK in the frontend
+    console.warn('APIClient.sendOTP is deprecated. Use Firebase SDK instead.');
+    return { success: true };
   }
 
-  static async verifyOTP(phone: string, code: string) {
+  static async verifyOTP(phone: string, idToken: string) {
     const res = await this.request('/auth/verify-otp', {
       method: 'POST',
-      body: JSON.stringify({ phone, code })
+      body: JSON.stringify({ phone, idToken })
     });
     if (res.token) {
         this.token = res.token;
-        localStorage.setItem('zipp_token', res.token);
+        localStorage.setItem('zipp_auth_token', res.token);
     }
     return res;
   }
