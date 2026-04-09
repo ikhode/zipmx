@@ -497,6 +497,7 @@ export default function App() {
                     onStopsChange={setStops}
                     onStartMapSelection={(mode: any) => { triggerHaptic('medium'); setSelectionMode(mode); }}
                     onRideTypeChange={setCurrentRideType}
+                    rideType={currentRideType}
                     onLoginRequired={() => onLoginRequired('passenger')}
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
                     onHeaderVisibilityChange={setIsHeaderHidden}

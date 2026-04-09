@@ -36,6 +36,7 @@ interface RideRequestSheetProps {
   onStopsChange: (stops: { position: [number, number], address: string }[]) => void;
   onStartMapSelection: (type: 'pickup' | 'dropoff' | { type: 'stop', index: number }) => void;
   onRideTypeChange: (type: 'ride' | 'errand' | 'taxi' | 'mototaxi') => void;
+  rideType: 'ride' | 'errand' | 'taxi' | 'mototaxi';
   onLoginRequired: () => void;
   preSelectedVehicle?: string;
   onHeaderVisibilityChange: (hide: boolean) => void;
@@ -51,7 +52,7 @@ interface RideRequestSheetProps {
 export function RideRequestSheet(props: RideRequestSheetProps) {
   const { 
     session, initialPlanning, onPlanningClose, onPickupChange, onDropoffChange, pickupLocation, pickupAddress, dropoffLocation, dropoffAddress,
-    stops, onStopsChange, onStartMapSelection, onRideTypeChange, onLoginRequired, preSelectedVehicle, onHeaderVisibilityChange, onActiveRideChange,
+    stops, onStopsChange, onStartMapSelection, onRideTypeChange, rideType, onLoginRequired, preSelectedVehicle, onHeaderVisibilityChange, onActiveRideChange,
     userLocation, geoLoading, onUseMyLocation
   } = props;
 
@@ -91,6 +92,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   }, [pickupLocation, dropoffLocation, isPlanning, step]);
 
   const [loading, setLoading] = useState(false);
+  const [errandDescription, setErrandDescription] = useState('');
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -210,11 +212,11 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       await APIClient.requestRide({
         pickup: { lat: pickupLocation[0], lng: pickupLocation[1], address: pickupAddress },
         dropoff: { lat: dropoffLocation[0], lng: dropoffLocation[1], address: dropoffAddress },
-        type: 'ride',
+        type: rideType === 'errand' ? 'errand' : 'ride',
         price,
         distance: dist,
         duration,
-        description: '',
+        description: errandDescription,
         items: '',
       });
       setStep('tracking');
@@ -425,6 +427,18 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                 <span className="label-m" style={{ fontWeight: 800 }}>Envío</span>
              </button>
           </div>
+
+          {rideType === 'errand' && (
+            <div className="errand-details-minimal stagger-in" style={{ marginTop: '24px' }}>
+              <input 
+                className="minimal-input-full"
+                placeholder="¿Qué mandamos? (ej. Llaves, Comida, Paquete)"
+                value={errandDescription}
+                onChange={(e) => setErrandDescription(e.target.value)}
+                style={{ width: '100%', padding: '16px', borderRadius: '16px', background: '#F3F4F6', border: '1px solid #E5E7EB', fontWeight: 700 }}
+              />
+            </div>
+          )}
         </div>
       )}
 
