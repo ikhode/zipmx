@@ -10,6 +10,7 @@ interface MapViewProps {
   stops?: [number, number][];
   selectingLocation?: boolean;
   onLocationSelected?: (loc: [number, number]) => void;
+  onMapInteraction?: () => void;
   nearbyDrivers?: { id: string, position: [number, number], type: string }[];
   /** Incrementar este valor fuerza un flyTo inmediato al `center` actual */
   flyToTrigger?: number;
@@ -23,6 +24,7 @@ export function MapView({
   stops = [],
   selectingLocation = false,
   onLocationSelected,
+  onMapInteraction,
   nearbyDrivers = [],
   flyToTrigger = 0,
 }: MapViewProps) {
@@ -61,7 +63,10 @@ export function MapView({
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    map.on('movestart', () => setIsDragging(true));
+    map.on('movestart', () => {
+      setIsDragging(true);
+      if (onMapInteraction) onMapInteraction();
+    });
     
     map.on('moveend', () => {
       setIsDragging(false);
@@ -139,26 +144,22 @@ export function MapView({
   useEffect(() => {
     if (!mapRef.current || !center || selectingLocation) return;
     
-    const currCenter = mapRef.current.getCenter();
-    const distance = Math.sqrt(
-      Math.pow(currCenter.lat - center[0], 2) + 
-      Math.pow(currCenter.lng - center[1], 2)
-    );
+    const map = mapRef.current;
+    const currCenter = map.getCenter();
+    const distance = L.latLng(currCenter).distanceTo(L.latLng(center));
 
     // Only fly if the change is significant (likely a programmatic state change)
-    if (distance > 0.001 || Math.abs(mapRef.current.getZoom() - zoom) > 0.5) {
-      const size = mapRef.current.getSize();
+    if (distance > 50 || Math.abs(map.getZoom() - zoom) > 0.5) {
+      const size = map.getSize();
       const targetPoint = L.point(size.x / 2, size.y * 0.35);
-      const targetLatLng = mapRef.current.containerPointToLatLng(targetPoint);
+      const centerPoint = L.point(size.x / 2, size.y / 2);
+      const pixelOffset = targetPoint.subtract(centerPoint);
       
-      const latOffset = center[0] - targetLatLng.lat;
-      const lngOffset = center[1] - targetLatLng.lng;
+      const projectedTarget = map.project(center, zoom);
+      const projectedCenter = projectedTarget.subtract(pixelOffset);
+      const targetCenterLatLng = map.unproject(projectedCenter, zoom);
       
-      mapRef.current.flyTo(
-        [center[0] + latOffset, center[1] + lngOffset], 
-        zoom, 
-        { duration: 1.2, easeLinearity: 0.1 }
-      );
+      map.flyTo(targetCenterLatLng, zoom, { duration: 1.2, easeLinearity: 0.1 });
     }
   }, [center, zoom, selectingLocation]);
 
@@ -168,19 +169,23 @@ export function MapView({
 
     const c = centerRef.current;
     const z = zoomRef.current;
+    const map = mapRef.current;
 
-    const size = mapRef.current.getSize();
+    const size = map.getSize();
     const targetPoint = L.point(size.x / 2, size.y * 0.35);
-    const targetLatLng = mapRef.current.containerPointToLatLng(targetPoint);
 
-    const latOffset = c[0] - targetLatLng.lat;
-    const lngOffset = c[1] - targetLatLng.lng;
+    // Calculate the pixel offset from center to our target point
+    const centerPoint = L.point(size.x / 2, size.y / 2);
+    const pixelOffset = targetPoint.subtract(centerPoint);
 
-    mapRef.current.flyTo(
-      [c[0] + latOffset, c[1] + lngOffset],
-      z,
-      { duration: 1.0, easeLinearity: 0.1 }
-    );
+    // Project target LatLng to pixel coordinate at the target zoom
+    const projectedTarget = map.project(c, z);
+    // Subtract pixel offset to find the corresponding map center projected coordinate
+    const projectedCenter = projectedTarget.subtract(pixelOffset);
+    // Unproject to get the final map center LatLng
+    const targetCenterLatLng = map.unproject(projectedCenter, z);
+
+    map.flyTo(targetCenterLatLng, z, { duration: 1.0, easeLinearity: 0.1 });
   // Solo se dispara cuando flyToTrigger cambia - lee center/zoom por refs
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyToTrigger]);

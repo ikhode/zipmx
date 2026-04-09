@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import APIClient, { APIUser } from './lib/api';
 import { MapView } from './components/MapView';
 import { RideRequestSheet } from './components/RideRequestSheet';
+
+type SelectionType = 'none' | 'pickup' | 'dropoff' | { type: 'stop', index: number };
+
 import { PassengerHome } from './components/PassengerHome';
 import { PromoDetailsSheet } from './components/PromoDetailsSheet';
 import { AccountMenuSheet } from './components/AccountMenuSheet';
@@ -18,7 +21,6 @@ import { useLocationTracker } from './hooks/useLocationTracker';
 import { LegalPage } from './components/Legal';
 
 type AppMode = 'passenger' | 'driver';
-type SelectionType = 'none' | 'pickup' | 'dropoff' | { type: 'stop', index: number };
 
 // --- Memoized Sub-components ---
 
@@ -41,8 +43,6 @@ const MapSelectionOverlay = React.memo(({
     </div>
   );
 });
-
-const MemoizedMapView = React.memo(MapView);
 
 const DEFAULT_LOCATION: [number, number] = [18.9113, -103.8743];
 
@@ -76,6 +76,14 @@ export default function App() {
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [selectionMode, setSelectionMode] = useState<SelectionType>('none');
   const [planningStarted, setPlanningStarted] = useState(false);
+  
+  // Refs to fix stale closures in watchPosition
+  const planningStartedRef = useRef(planningStarted);
+  const selectionModeRef = useRef(selectionMode);
+  
+  useEffect(() => { planningStartedRef.current = planningStarted; }, [planningStarted]);
+  useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
+
   const [showPromoDetails, setShowPromoDetails] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [currentRideType, setCurrentRideType] = useState<'ride' | 'errand' | 'taxi' | 'mototaxi'>('ride');
@@ -130,6 +138,9 @@ export default function App() {
     triggerHaptic('medium');
   }, []);
 
+  // User's last geocoded location to avoid excessive API calls
+  const lastGeocodedLocation = useRef<[number, number] | null>(null);
+
   // --- Geolocation: get user's real position and track it ---
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -143,25 +154,33 @@ export default function App() {
         const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude];
         setUserLocation(loc);
         
-        // Auto-set pickup to current location if not set yet
+        // Update pickup to current location if not set yet OR if not planning a ride
         setPickupLocation((prevPickup) => {
-          if (!prevPickup) {
-            setFlyToTrigger(prev => prev + 1);
-            reverseGeocode(loc[0], loc[1]).then((res) => {
-              if (res) setPickupAddress(formatAddress(res));
-              else setPickupAddress('Mi ubicación actual');
-            });
+          const isPlanning = planningStartedRef.current;
+          const sMode = selectionModeRef.current;
+
+          if (!prevPickup || (!isPlanning && sMode === 'none')) {
+            // Re-center map if this is the first real fix
+            if (!prevPickup) setFlyToTrigger(prev => prev + 1);
+            
+            // Only update address if not in map selection and user has moved significantly (> ~50m)
+            if (sMode === 'none' && !isPlanning) {
+              const last = lastGeocodedLocation.current;
+              const hasMovedSignificantly = !last || (Math.abs(last[0] - loc[0]) > 0.0005 || Math.abs(last[1] - loc[1]) > 0.0005);
+              
+              if (hasMovedSignificantly) {
+                lastGeocodedLocation.current = loc;
+                reverseGeocode(loc[0], loc[1]).then((res) => {
+                  if (res) setPickupAddress(formatAddress(res));
+                  else if (!pickupAddress) setPickupAddress('Mi ubicación actual');
+                });
+              }
+            }
             return loc;
           }
           return prevPickup;
         });
 
-        // Also update selectionInitialLocation if they just entered selection mode
-        setSelectionInitialLocation((prev) => {
-           if (prev && prev[0] === DEFAULT_LOCATION[0]) return loc;
-           return prev;
-        });
-        
         setGeoLoading(false);
       },
       () => {
@@ -233,6 +252,15 @@ export default function App() {
   }, [mode, driverIsOnline, userLocation, updateLocation]);
 
 
+  // Flag to know if we have already successfully centered on a real location for the current selection mode
+  const selectionHasRealLocation = useRef(false);
+  // Flag to track if the user has manually moved the map in the current selection session
+  const userInteractedRef = useRef(false);
+
+  const handleMapInteraction = useCallback(() => {
+    userInteractedRef.current = true;
+  }, []);
+
   // Set initial temp location when entering selection mode
   useEffect(() => {
     const isSameMode = (a: SelectionType, b: SelectionType) => {
@@ -241,30 +269,47 @@ export default function App() {
     };
 
     if (selectionMode !== 'none') {
-      if (isSameMode(lastSelectionMode.current, selectionMode)) return;
+      const modeChanged = !isSameMode(lastSelectionMode.current, selectionMode);
+      
+      // Reset interaction flag on mode change
+      if (modeChanged) {
+        userInteractedRef.current = false;
+        selectionHasRealLocation.current = false;
+      }
+      
+      // If user interacted manually, WE DO NOT AUTO-FOLLOW anymore for this session
+      if (userInteractedRef.current && selectionHasRealLocation.current) return;
+
       lastSelectionMode.current = selectionMode;
 
       let initial: [number, number] | null = null;
       let initialAddr = 'Buscando dirección...';
 
       if (selectionMode === 'pickup') {
-        initial = pickupLocation || userLocation;
+        initial = userLocation || pickupLocation;
         initialAddr = pickupAddress || 'Mi ubicación';
       } else if (selectionMode === 'dropoff') {
-        initial = dropoffLocation || pickupLocation || userLocation;
-        initialAddr = dropoffAddress || pickupAddress || 'Ubicación actual';
+        initial = dropoffLocation || userLocation || pickupLocation;
+        initialAddr = dropoffAddress || '¿A dónde vas?';
       } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
-        initial = stops[selectionMode.index]?.position || pickupLocation || userLocation;
+        initial = stops[selectionMode.index]?.position || userLocation || pickupLocation;
         initialAddr = stops[selectionMode.index]?.address || 'Nueva parada';
       }
 
-      const loc: [number, number] = initial || userLocation || DEFAULT_LOCATION;
+      // If we got a real location from state (not using the fallback), mark as real
+      if (initial) {
+        selectionHasRealLocation.current = true;
+      }
+
+      const loc: [number, number] = initial || DEFAULT_LOCATION;
       setTempLocation(loc);
       setTempAddress(initialAddr);
       setSelectionInitialLocation(loc);
       setFlyToTrigger(prev => prev + 1);
     } else {
       lastSelectionMode.current = 'none';
+      selectionHasRealLocation.current = false;
+      userInteractedRef.current = false;
       setSelectionInitialLocation(null);
       setTempLocation(null);
       setTempAddress('Buscando dirección...');
@@ -285,10 +330,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [tempLocation, selectionMode]);
 
-  const handleLocationSelected = useCallback((loc: [number, number]) => {
-    setTempLocation(loc);
-  }, []);
-
   const confirmSelection = useCallback(() => {
     if (!tempLocation) return;
     
@@ -305,8 +346,6 @@ export default function App() {
     }
     setSelectionMode('none');
   }, [tempLocation, tempAddress, selectionMode, stops]);
-
-  const stopPositions = useMemo<[number, number][]>(() => stops.map(s => s.position), [stops]);
 
   const mapCenter = useMemo<[number, number]>(() => {
     if (selectionMode !== 'none' && selectionInitialLocation) return selectionInitialLocation;
@@ -400,14 +439,16 @@ export default function App() {
     <div className={`app-container ${mode === 'passenger' && !pickupLocation && !dropoffLocation && selectionMode === 'none' ? 'is-home' : ''}`}>
       <StatusBanner />
       <div className="map-wrapper">
-        <MemoizedMapView 
+        <MapView 
           center={mapCenter}
+          zoom={15}
           pickupLocation={pickupLocation || undefined}
           dropoffLocation={dropoffLocation || undefined}
-          stops={stopPositions}
+          stops={stops.map(s => s.position)}
           selectingLocation={selectionMode !== 'none'}
-          nearbyDrivers={mode === 'passenger' ? realTimeDrivers : []}
-          onLocationSelected={handleLocationSelected}
+          onLocationSelected={(loc) => setTempLocation(loc)}
+          onMapInteraction={handleMapInteraction}
+          nearbyDrivers={realTimeDrivers}
           flyToTrigger={flyToTrigger}
         />
       </div>
