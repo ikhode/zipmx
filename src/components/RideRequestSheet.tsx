@@ -37,7 +37,7 @@ interface RideRequestSheetProps {
   onStartMapSelection: (type: 'pickup' | 'dropoff' | { type: 'stop', index: number }) => void;
   onRideTypeChange: (type: 'ride' | 'errand' | 'taxi' | 'mototaxi') => void;
   rideType: 'ride' | 'errand' | 'taxi' | 'mototaxi';
-  onLoginRequired: () => void;
+  onLoginRequired: (reason?: string) => void;
   preSelectedVehicle?: string;
   onHeaderVisibilityChange: (hide: boolean) => void;
   onActiveRideChange?: (active: boolean) => void;
@@ -196,8 +196,9 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
         return;
     }
     
-    if (!session) {
-      onLoginRequired();
+    if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+      if (session) showToast('Validación de teléfono requerida para solicitar viaje', 'info');
+      onLoginRequired('Validación requerida para pedir viaje');
       return;
     }
     

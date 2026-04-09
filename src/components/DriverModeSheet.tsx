@@ -6,7 +6,7 @@ import { triggerHaptic } from '../lib/haptics';
 interface DriverModeSheetProps {
   session: any;
   onActiveRideChange?: (active: boolean) => void;
-  onLoginRequired: () => void;
+  onLoginRequired: (reason?: string) => void;
   onOnlineChange?: (online: boolean) => void;
 }
 
@@ -106,8 +106,8 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   }, [session, fetchData, isOnline, activeRide]);
 
   const setupDriver = async () => {
-    if (!session) {
-      onLoginRequired();
+    if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+      onLoginRequired('Identifícate para empezar a conducir');
       return;
     }
     setLoading(true);
@@ -119,6 +119,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       setIsOnline(true);
       showToast('¡Configuración completada!', 'success');
     } catch (error: any) {
+      console.error('[DriverModeSheet] Setup failed:', error);
       showToast(error.message || 'Error en configuración', 'error');
     } finally {
       setLoading(false);
@@ -152,8 +153,8 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   }, [fetchData, showToast]);
 
   const toggleOnline = () => {
-    if (!session) {
-      onLoginRequired();
+    if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+      onLoginRequired('Identifícate para empezar a conducir');
       return;
     }
     triggerHaptic('medium');

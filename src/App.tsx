@@ -116,6 +116,7 @@ export default function App() {
   const [showVerificationSheet, setShowVerificationSheet] = useState<{ type: 'passenger' | 'driver' } | null>(null);
   const [showQuickAuth, setShowQuickAuth] = useState(false);
   const [showAuthSheet, setShowAuthSheet] = useState(false);
+  const [authReason, setAuthReason] = useState<string | undefined>();
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
   const [flyToTrigger, setFlyToTrigger] = useState(0);
   const [driverIsOnline, setDriverIsOnline] = useState(false);
@@ -129,8 +130,9 @@ export default function App() {
     mode === 'driver' && driverIsOnline
   );
 
-  const onLoginRequired = (type: 'passenger' | 'driver') => {
+  const onLoginRequired = (type: 'passenger' | 'driver', reason?: string) => {
     setQuickAuthType(type);
+    setAuthReason(reason);
     setShowAuthSheet(true);
     triggerHaptic('medium');
   };
@@ -693,8 +695,9 @@ export default function App() {
           initialSnap={0}
         >
           <Auth 
-            onSuccess={(user) => { setSession({ user }); setShowAuthSheet(false); }}
+            onSuccess={(user) => { setSession({ user }); setShowAuthSheet(false); setAuthReason(undefined); }}
             initialMode={quickAuthType}
+            reason={authReason}
           />
         </BottomSheet>
       )}

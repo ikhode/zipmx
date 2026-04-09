@@ -2566,4 +2566,17 @@ button:active {
   margin-bottom: 24px;
   font-size: 14px;
   font-weight: 600;
-}
+}
+
+.auth-reason-badge {
+  background: var(--surface-alt);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 12px;
+  border-radius: 100px;
+  display: inline-block;
+  margin-top: 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}

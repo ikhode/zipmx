@@ -552,13 +552,39 @@ app.post('/driver/setup', authGuard, async (c) => {
   const { vehicleType } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
   try {
-    const newDriver = await db.insert(schema.drivers).values({
-      id: payload.id, vehicleType, vehicleBrand: 'N/A', vehicleModel: 'N/A', vehicleYear: 2024,
-      licensePlate: `TEMP-${Date.now()}`, driverLicense: 'PENDING', isActive: true, isVerified: true,
-      baseFare: 25, costPerKm: 10, costPerMinute: 2
-    }).returning();
+    const newDriver = await db.insert(schema.drivers)
+      .values({
+        id: payload.id, 
+        vehicleType, 
+        vehicleBrand: 'N/A', 
+        vehicleModel: 'N/A', 
+        vehicleYear: 2024,
+        licensePlate: `TEMP-${Date.now()}`, 
+        driverLicense: 'PENDING', 
+        isActive: true, 
+        isVerified: true,
+        baseFare: 25, 
+        costPerKm: 10, 
+        costPerMinute: 2
+      })
+      .onConflictDoUpdate({
+        target: schema.drivers.id,
+        set: { 
+          vehicleType,
+          isActive: true,
+          isVerified: true,
+          updatedAt: new Date().toISOString()
+        }
+      })
+      .returning();
+    // Also ensure the user record is updated to 'driver' type
+    await db.update(schema.users)
+      .set({ userType: 'driver', updatedAt: new Date().toISOString() })
+      .where(eq(schema.users.id, payload.id));
+
     return c.json(newDriver[0]);
   } catch (error: any) {
+    console.error('[/driver/setup] Error:', error);
     return c.json({ error: error.message }, 500);
   }
 });

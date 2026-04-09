@@ -15,9 +15,10 @@ import {
 interface AuthProps {
   onSuccess?: (user: any) => void;
   initialMode?: 'passenger' | 'driver';
+  reason?: string;
 }
 
-export function Auth({ onSuccess, initialMode }: AuthProps) {
+export function Auth({ onSuccess, initialMode, reason }: AuthProps) {
     const { showToast } = useToast();
     const [loading, setLoading] = useState(false);
     const [step, setStep] = useState<'phone' | 'otp' | 'signup'>('phone');
@@ -185,6 +186,7 @@ export function Auth({ onSuccess, initialMode }: AuthProps) {
         <div className="auth-header">
            <div className="auth-logo-badge">Z</div>
            <h1 className="brand" style={{ fontSize: '32px', letterSpacing: '-1px' }}>ZIPP</h1>
+           {reason && <p className="auth-reason-badge fade-in">{reason}</p>}
         </div>
 
         <div className="auth-form-wrapper stagger-in">

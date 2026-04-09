@@ -120,8 +120,8 @@ export function MapView({
         marker = L.marker(driver.position, {
           icon: L.icon({
             iconUrl: driver.type === 'moto' 
-              ? 'https://zipp.inteligent.software/icons/mototaxi_3d_icon_1775323676892.png' 
-              : 'https://zipp.inteligent.software/icons/taxi_3d_icon_1775323650355.png',
+              ? '/icons/mototaxi_3d_icon_1775323676892.png' 
+              : '/icons/taxi_3d_icon_1775323650355.png',
             iconSize: [40, 40],
             iconAnchor: [20, 20]
           }),
