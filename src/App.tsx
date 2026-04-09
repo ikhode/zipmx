@@ -518,8 +518,6 @@ export default function App() {
                   <div className="sheet-handle-minimal"></div>
                   {!session && !hasActiveRide && (
                     <div className="guest-cta-minimal fade-in">
-                      <span className="pill-badge">Explora Zipp</span>
-                      <p>Identifícate para proteger tu viaje y ver precios exactos</p>
                        <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}>INICIAR SESIÓN</button>
                     </div>
                   )}

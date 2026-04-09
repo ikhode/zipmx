@@ -9,8 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "deploy": "npm run build && wrangler d1 migrations apply zipp_database --remote && wrangler pages deploy dist --project-name zipp --branch produccion"
-
+    "deploy": "cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 npm run build && cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 wrangler d1 migrations apply zipp_database --remote && cross-env CLOUDFLARE_ACCOUNT_ID=ac96116c5db82e232d04042b84c09399 wrangler pages deploy dist --project-name zipp --branch produccion"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.7.6",
@@ -33,6 +32,7 @@
     "@types/react-dom": "^18.2.19",
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "drizzle-kit": "^0.31.10",
     "jsdom": "^29.0.1",
     "typescript": "^5.3.3",
