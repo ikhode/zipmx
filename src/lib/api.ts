@@ -24,6 +24,8 @@ export interface APIRide {
   estimatedDurationMinutes: number;
   errandDescription?: string;
   errandItems?: string;
+  passengerId: string;
+  driverId?: string | null;
   createdAt: string;
 }
 

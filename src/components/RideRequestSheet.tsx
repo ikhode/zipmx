@@ -263,31 +263,54 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
 
     return (
       <div className="ride-request-sheet fade-in">
-        <div className="tracking-view-minimal">
+        <div className="tracking-view-premium">
           <div className="tracking-header-mini">
             <h2 className="tracking-status-text">{statusMap[activeRide.status]}</h2>
-            {activeRide.status === 'requested' && <div className="mini-pulse"></div>}
+            <div className="pulse-indicator"></div>
           </div>
 
-          <div className="driver-card-minimal stagger-in">
-             <div className="driver-avatar-mini skeleton-circle">
-               {activeRide.status === 'requested' ? '⏳' : '👤'}
+          <div className="driver-arrival-card stagger-in">
+             <div className="driver-main-info">
+                <div className="driver-photo-premium">
+                   {activeRide.status === 'requested' ? '⏳' : '👤'}
+                </div>
+                <div className="driver-detail-premium">
+                   <div className="driver-name-text">
+                      {activeRide.status === 'requested' ? 'Asignando...' : 'Juan G.'}
+                   </div>
+                   <div className="driver-rating-mini">
+                      <span>⭐ 4.9</span>
+                      <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>• 1,240 viajes</span>
+                   </div>
+                </div>
+                <div className="driver-action-mini">
+                   <button className="icon-btn-mini interactive-scale" onClick={() => triggerHaptic('light')}>📞</button>
+                </div>
              </div>
-             <div className="driver-info-mini">
-               <div className="driver-name-mini">{activeRide.status === 'requested' ? 'Asignando...' : 'Juan'}</div>
-               {activeRide.status !== 'requested' && <div className="vehicle-info-mini">Toyota Corolla • ZIP123</div>}
-             </div>
-             <div className="driver-action-mini">
-                <button className="icon-btn-mini interactive-scale" onClick={() => triggerHaptic('light')}>📞</button>
-             </div>
+
+             {activeRide.status !== 'requested' && (
+               <div className="vehicle-badge-premium fade-in">
+                  <div className="v-brand-plate">
+                     <span className="v-plate-text">ZIP 123</span>
+                     <span className="v-model-text">Toyota Corolla • Blanco</span>
+                  </div>
+                  <div className="v-icon-m" style={{ fontSize: '24px' }}>🚗</div>
+               </div>
+             )}
           </div>
           
-          <div className="tracking-meta-mini">
-             <div className="meta-row"><span>Precio</span> <strong>${activeRide.totalFare}</strong></div>
-             <div className="meta-row"><span>Pago</span> <strong>Efectivo</strong></div>
+          <div className="tracking-meta-mini" style={{ background: 'var(--surface-alt)', padding: '20px', borderRadius: '24px', marginBottom: '24px' }}>
+             <div className="meta-row">
+                <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Precio estimado</span> 
+                <strong style={{ fontSize: '18px' }}>${activeRide.totalFare}</strong>
+             </div>
+             <div className="meta-row">
+                <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Método de pago</span> 
+                <strong>💵 Efectivo</strong>
+             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+          <div style={{ display: 'flex', gap: '12px' }}>
             <button 
               className="interactive-scale" 
               onClick={() => {
@@ -296,11 +319,12 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                   window.open('tel:911');
                 }
               }}
-              style={{ flex: 1, background: '#FF4B2B22', color: '#FF416C', border: 'none', padding: '16px', borderRadius: '16px', fontWeight: 800, fontSize: '15px' }}
+              style={{ padding: '16px', borderRadius: '16px', background: '#FEE2E2', color: '#EF4444', border: 'none', fontWeight: 900, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}
             >
-              🆘 SOS
+              <span>🆘</span>
+              <span>SOS</span>
             </button>
-            <button className="minimal-cancel-btn interactive-scale" style={{ flex: 2, marginTop: 0 }} onClick={() => cancelRide(activeRide.id)}>Cancelar viaje</button>
+            <button className="minimal-cancel-btn interactive-scale" style={{ flex: 1, marginTop: 0, background: '#F3F4F6', color: '#6B7280' }} onClick={() => cancelRide(activeRide.id)}>Cancelar viaje</button>
           </div>
         </div>
       </div>

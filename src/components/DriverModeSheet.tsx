@@ -8,6 +8,7 @@ interface DriverModeSheetProps {
   onActiveRideChange?: (active: boolean) => void;
   onLoginRequired: (reason?: string) => void;
   onOnlineChange?: (online: boolean) => void;
+  onUserUpdate?: (user: any) => void;
 }
 
 type VehicleType = 'car' | 'motorcycle' | 'bicycle' | 'rickshaw' | 'taxi' | 'skates';
@@ -20,7 +21,7 @@ interface RideCardProps {
   onComplete?: () => void;
 }
 
-const RideCard = React.memo(({ ride, onAccept, onArrive, onStart, onComplete }: RideCardProps) => {
+const RideCard = React.memo(({ ride, onAccept }: RideCardProps) => {
   const isActionable = ride.status === 'requested' || ride.status === 'accepted' || ride.status === 'arrived' || ride.status === 'in_progress';
 
   return (
@@ -35,21 +36,90 @@ const RideCard = React.memo(({ ride, onAccept, onArrive, onStart, onComplete }: 
         {ride.status === 'requested' && onAccept && (
           <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onAccept(ride.id); }}>ACEPTAR</button>
         )}
-        {ride.status === 'accepted' && onArrive && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onArrive(); }}>LLEGUÉ</button>
-        )}
-        {ride.status === 'arrived' && onStart && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onStart(); }}>INICIAR</button>
-        )}
-        {ride.status === 'in_progress' && onComplete && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('success'); onComplete(); }} style={{ background: '#10B981', color: 'white' }}>FINALIZAR</button>
-        )}
       </div>
     </div>
   );
 });
 
-export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange }: DriverModeSheetProps) {
+const ActiveRideFocused = ({ 
+  ride, 
+  onArrive, 
+  onStart, 
+  onComplete 
+}: { 
+  ride: APIRide, 
+  onArrive: () => void, 
+  onStart: () => void, 
+  onComplete: () => void 
+}) => {
+  return (
+    <div className="active-ride-detail-view">
+      <div className="active-trip-card-premium stagger-in">
+        <div className="active-trip-header">
+          <div className="trip-type-badge">
+            <span>{ride.rideType === 'ride' ? '🚗 VIAJE' : '📦 ENVÍO'}</span>
+            <div className="pulse-indicator"></div>
+          </div>
+          <div className="trip-fare-premium">${ride.totalFare}</div>
+        </div>
+
+        <div className="trip-locations-focused">
+          <div className="focused-addr-row">
+            <div className="addr-dot-focused"></div>
+            <div className="addr-info-focused">
+              <div className="addr-label-focused">Recogida</div>
+              <div className="addr-text-focused">{ride.pickupAddress.split(',')[0]}</div>
+            </div>
+          </div>
+
+          <div className="focused-addr-row">
+            <div className="addr-dot-focused dest"></div>
+            <div className="addr-info-focused">
+              <div className="addr-label-focused">Destino</div>
+              <div className="addr-text-focused">{ride.dropoffAddress.split(',')[0]}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="trip-actions-grid" style={{ marginTop: '32px' }}>
+          {ride.status === 'accepted' && (
+            <button className="action-btn-premium arrive interactive-scale" onClick={() => { triggerHaptic('medium'); onArrive(); }}>
+              <span>Llegué al punto</span>
+              <span>📍</span>
+            </button>
+          )}
+          {ride.status === 'arrived' && (
+            <button className="action-btn-premium start interactive-scale" onClick={() => { triggerHaptic('success'); onStart(); }}>
+              <span>Iniciar Viaje</span>
+              <span>🚀</span>
+            </button>
+          )}
+          {ride.status === 'in_progress' && (
+            <button className="action-btn-premium complete interactive-scale" onClick={() => { triggerHaptic('success'); onComplete(); }}>
+              <span>Finalizar Viaje</span>
+              <span>🏁</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="stagger-in" style={{ animationDelay: '0.3s' }}>
+        <div style={{ display: 'flex', gap: '12px' }}>
+           <button className="minimal-search-box interactive-scale" style={{ flex: 1, padding: '16px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => window.open(`tel:${ride.passengerId.substring(0, 10)}`)}>
+             <span style={{ fontSize: '18px' }}>📞</span>
+             <span style={{ fontWeight: 800, fontSize: '14px' }}>Llamar</span>
+           </button>
+           <button className="minimal-search-box interactive-scale" style={{ flex: 1, padding: '16px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+             <span style={{ fontSize: '18px' }}>💬</span>
+             <span style={{ fontWeight: 800, fontSize: '14px' }}>Chat</span>
+           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange, onUserUpdate }: DriverModeSheetProps) {
   const { showToast } = useToast();
   const [rides, setRides] = useState<APIRide[]>([]);
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
@@ -63,7 +133,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   useEffect(() => {
     onOnlineChange?.(isOnline);
   }, [isOnline, onOnlineChange]);
-  const [needsSetup, setNeedsSetup] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(session?.user?.userType === 'passenger');
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
   const [loading, setLoading] = useState(false);
 
@@ -88,10 +158,22 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     }
 
     const checkSetup = async () => {
+      // If we already know the user is a driver from the session, we don't need setup grid
+      if (session.user.userType === 'driver') {
+        setNeedsSetup(false);
+        // Still fetch to get isActive status
+        const driver = await APIClient.getDriverSetup();
+        if (driver) setIsOnline(driver.isActive);
+        return;
+      }
+
       try {
         const driver = await APIClient.getDriverSetup();
         if (!driver) setNeedsSetup(true);
-        else setIsOnline(driver.isActive);
+        else {
+          setNeedsSetup(false);
+          setIsOnline(driver.isActive);
+        }
       } catch {
         setNeedsSetup(true);
       }
@@ -115,6 +197,13 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     try {
       const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
       await APIClient.setupDriver(mappedType as any);
+      
+      // Refresh profile to get updated userType: 'driver'
+      const updatedUser = await APIClient.getProfile();
+      if (updatedUser) {
+        onUserUpdate?.(updatedUser);
+      }
+      
       setNeedsSetup(false);
       setIsOnline(true);
       showToast('¡Configuración completada!', 'success');
@@ -214,8 +303,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
 
       {activeRide ? (
         <div className="active-ride-section">
-          <h3 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px' }}>Viaje Activo</h3>
-          <RideCard 
+          <ActiveRideFocused 
             ride={activeRide} 
             onArrive={() => handleUpdateStatus('arrived')}
             onStart={() => handleUpdateStatus('in_progress')} 

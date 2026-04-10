@@ -584,6 +584,7 @@ export default function App() {
                  onActiveRideChange={setHasActiveRide} 
                  onLoginRequired={() => onLoginRequired('driver')}
                  onOnlineChange={setDriverIsOnline}
+                 onUserUpdate={(user) => setSession({ user })}
                />
              </div>
           )}
