@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import APIClient, { APIUser, APIRide } from '../lib/api';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
+import { PostRideSummary } from './PostRideSummary';
 
 interface DriverModeSheetProps {
   session: { user: APIUser } | null;
@@ -105,16 +106,25 @@ const ActiveRideFocused = ({
       </div>
 
       <div className="stagger-in" style={{ animationDelay: '0.3s' }}>
-        <div style={{ display: 'flex', gap: '12px' }}>
-           <button className="premium-auth-btn interactive-scale" style={{ flex: 1, padding: '16px', borderRadius: '16px', justifyContent: 'center', background: 'white', color: 'black', border: '1px solid #E5E7EB' }} onClick={() => window.open(`tel:${ride.passengerId.substring(0, 10)}`)}>
-             <span style={{ fontSize: '18px', marginRight: '8px' }}>📞</span>
-             <span style={{ fontWeight: 800 }}>Llamar Pasajero</span>
-           </button>
-           <button className="premium-auth-btn interactive-scale" style={{ flex: 1, padding: '16px', borderRadius: '16px', justifyContent: 'center', background: 'white', color: 'black', border: '1px solid #E5E7EB' }}>
-             <span style={{ fontSize: '18px', marginRight: '8px' }}>💬</span>
-             <span style={{ fontWeight: 800 }}>Enviar Chat</span>
-           </button>
-        </div>
+         <div style={{ display: 'flex', gap: '12px' }}>
+            <button className="premium-auth-btn interactive-scale" style={{ flex: 1, padding: '16px', borderRadius: '16px', justifyContent: 'center', background: 'white', color: 'black', border: '1px solid #E5E7EB' }} onClick={() => window.open(`tel:${ride.passengerId.substring(0, 10)}`)}>
+              <span style={{ fontSize: '18px', marginRight: '8px' }}>📞</span>
+              <span style={{ fontWeight: 800 }}>Llamar</span>
+            </button>
+            <button 
+                className="premium-auth-btn interactive-scale" 
+                style={{ flex: 1, padding: '16px', borderRadius: '16px', justifyContent: 'center', background: '#111827', color: 'white', border: 'none' }}
+                onClick={() => {
+                   const dest = ride.status === 'accepted' ? 
+                     `${ride.pickupLatitude},${ride.pickupLongitude}` : 
+                     `${ride.dropoffLatitude},${ride.dropoffLongitude}`;
+                   window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`);
+                }}
+            >
+              <span style={{ fontSize: '18px', marginRight: '8px' }}>🚀</span>
+              <span style={{ fontWeight: 800 }}>Navegar</span>
+            </button>
+         </div>
       </div>
     </div>
   );
@@ -134,6 +144,19 @@ const AcceptanceSplash = ({ onFinish }: { onFinish: () => void }) => {
     </div>
   );
 };
+
+const SearchingRadar = () => (
+  <div className="searching-radar-premium fade-in">
+    <div className="radar-v2">
+      <div className="ring"></div>
+      <div className="ring"></div>
+      <div className="ring"></div>
+      <div className="radar-center-premium">📡</div>
+    </div>
+    <div className="searching-text-premium">Buscando solicitudes</div>
+    <div className="searching-subtext-premium">Mantente alerta a nuevas notificaciones</div>
+  </div>
+);
 
 export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange, onUserUpdate, activeRideOverride }: DriverModeSheetProps) {
   const { showToast } = useToast();
@@ -179,10 +202,8 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     }
 
     const checkSetup = async () => {
-      // If we already know the user is a driver from the session, we don't need setup grid
       if (session.user.userType === 'driver') {
         setNeedsSetup(false);
-        // Still fetch to get isActive status
         const driver = await APIClient.getDriverSetup();
         if (driver) setIsOnline(driver.isActive);
         return;
@@ -219,7 +240,6 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
       await APIClient.setupDriver(mappedType as any);
       
-      // Refresh profile to get updated userType: 'driver'
       const updatedUser = await APIClient.getProfile();
       if (updatedUser) {
         onUserUpdate?.(updatedUser);
@@ -230,7 +250,6 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       showToast('¡Configuración completada!', 'success');
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Error en configuración';
-      console.error('[DriverModeSheet] Setup failed:', error);
       showToast(message, 'error');
     } finally {
       setLoading(false);
@@ -246,6 +265,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
           showToast('Viaje finalizado con éxito', 'success');
           triggerHaptic('success');
       }
+      setActiveRide(prev => prev ? { ...prev, status } : prev);
       fetchData();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error al actualizar estado';
@@ -259,14 +279,10 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     try {
       await APIClient.acceptRide(id);
       setShowAcceptanceSplash(true);
-      
-      // Intentar obtener el viaje activo inmediatamente para una transición fluida
-      // Esto complementa el polling de App.tsx pero lo hace instantáneo aquí
       const active = await APIClient.getActiveRide();
       if (active) {
         setActiveRide(active);
       }
-      
       fetchData();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Error al aceptar viaje';
@@ -326,13 +342,14 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   }
 
   return (
-    <div className="driver-mode-sheet premium-card-anim stagger-in">
+    <div className="driver-mode-sheet premium-card-anim">
       {showAcceptanceSplash && <AcceptanceSplash onFinish={() => setShowAcceptanceSplash(false)} />}
-      <div className="driver-status-bar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '40px' }}>
+      
+      <div className="driver-status-bar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px' }}>
           <button 
-              className={`status-toggle-pill interactive-scale ${isOnline ? 'online' : 'offline'} glass-v2-card`} 
+              className={`status-toggle-pill interactive-scale ${isOnline ? 'online' : 'offline'}`} 
               onClick={toggleOnline}
-              style={{ padding: '12px 24px', borderRadius: '100px', fontWeight: 900, fontSize: '14px', letterSpacing: '0.05em' }}
+              style={{ padding: '14px 28px', borderRadius: '100px', fontWeight: 900, fontSize: '13px', letterSpacing: '0.08em' }}
           >
             {isOnline ? (
               <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -345,31 +362,50 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
           </button>
       </div>
 
-      {activeRide ? (
-        <div className="active-ride-section">
-          <ActiveRideFocused 
-            ride={activeRide} 
-            onArrive={() => handleUpdateStatus('arrived')}
-            onStart={() => handleUpdateStatus('in_progress')} 
-            onComplete={() => handleUpdateStatus('completed')} 
-          />
-        </div>
-      ) : (
-        <div className="available-rides-section">
-          <h3 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px' }}>Solicitudes cercanas</h3>
-          {!isOnline ? (
-            <div className="empty-info" style={{ textAlign: 'center', color: '#6B7280', padding: '40px 0' }}>Conéctate {!session && '(Identifícate primero)'} para empezar a ver solicitudes</div>
-          ) : rides.length === 0 ? (
-            <div className="empty-info" style={{ textAlign: 'center', color: '#6B7280', padding: '40px 0' }}>Buscando solicitudes...</div>
-          ) : (
-            <div className="rides-list stagger-in" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {rides.map(ride => (
-                <RideCard key={ride.id} ride={ride} onAccept={handleAcceptRide} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <div className="driver-content-transition" key={activeRide ? 'active' : 'available'}>
+        {activeRide ? (
+          <div className="active-ride-section">
+            {activeRide.status === 'completed' ? (
+                <PostRideSummary 
+                    ride={activeRide} 
+                    isDriver 
+                    onClose={() => {
+                        setActiveRide(null);
+                        fetchData();
+                    }} 
+                />
+            ) : (
+                <ActiveRideFocused 
+                    ride={activeRide} 
+                    onArrive={() => handleUpdateStatus('arrived')}
+                    onStart={() => handleUpdateStatus('in_progress')} 
+                    onComplete={() => handleUpdateStatus('completed')} 
+                />
+            )}
+          </div>
+        ) : (
+          <div className="available-rides-section stagger-in">
+            {!isOnline ? (
+              <div className="offline-state-premium fade-in" style={{ textAlign: 'center', padding: '60px 20px' }}>
+                <div style={{ fontSize: '48px', marginBottom: '20px', filter: 'grayscale(1)', opacity: 0.5 }}>😴</div>
+                <h3 style={{ fontSize: '20px', fontWeight: 900, marginBottom: '8px' }}>Estás fuera de servicio</h3>
+                <p style={{ color: '#6B7280', fontWeight: 600, fontSize: '14px' }}>Conéctate para empezar a recibir solicitudes de viajes cercanas.</p>
+              </div>
+            ) : rides.length === 0 ? (
+              <SearchingRadar />
+            ) : (
+              <div className="rides-list-container">
+                <h3 style={{ fontSize: '16px', fontWeight: 900, marginBottom: '20px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Solicitudes cercanas</h3>
+                <div className="rides-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {rides.map(ride => (
+                    <RideCard key={ride.id} ride={ride} onAccept={handleAcceptRide} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

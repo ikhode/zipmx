@@ -216,6 +216,13 @@ class APIClient {
     });
   }
 
+  static async submitRating(rideId: string, data: { ratedId: string, rating: number, comment?: string }) {
+    return await this.request(`/rides/${rideId}/rate`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   static async updateRideStatus(rideId: string, status: string) {
     return await this.request(`/rides/${rideId}/status`, {
       method: 'POST',

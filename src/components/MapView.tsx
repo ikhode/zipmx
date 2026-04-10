@@ -247,6 +247,7 @@ export function MapView({
   }, [pickupLocation, dropoffLocation]);
 
   const driverMarkerRef = useRef<L.Marker | null>(null);
+  const lastFocusTypeRef = useRef<string>('');
 
   // Driver Marker Layer
   useEffect(() => {
@@ -269,16 +270,32 @@ export function MapView({
     }
   }, [driverLocation]);
 
-  // Auto-Focus Intelligence
+  // Auto-Focus Intelligence (Optimized to prevent infinite loops)
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || selectingLocation) return;
     
+    // Determine the current "Focus Context"
+    const hasDriver = !!driverLocation;
+    const hasPickup = !!pickupLocation;
+    const hasDropoff = !!dropoffLocation;
+    const numStops = stops?.length || 0;
+
+    // We create a unique key for this "phase" of the ride
+    const currentFocusType = `${hasDriver}:${hasPickup}:${hasDropoff}:${numStops}`;
+    
+    // CRITICAL: If the phase hasn't changed, we don't trigger auto-focus.
+    // This prevents the map from re-zooming every time the driver moves.
+    if (currentFocusType === lastFocusTypeRef.current) return;
+    
+    // If everything is gone, reset and return
+    if (!hasDriver && !hasPickup && !hasDropoff) {
+      lastFocusTypeRef.current = '';
+      return;
+    }
+
+    lastFocusTypeRef.current = currentFocusType;
     const targets: L.LatLngExpression[] = [];
-    
-    // Logic: 
-    // 1. If we have driver and pickup, focus those (On the way to pickup)
-    // 2. If we have driver and dropoff, focus those (Trip in progress)
-    // 3. Otherwise, if we have pickup and dropoff, focus those (Planning)
+    const map = mapRef.current;
     
     if (driverLocation) {
       targets.push(driverLocation);
@@ -292,15 +309,15 @@ export function MapView({
 
     if (targets.length >= 2) {
        const bounds = L.latLngBounds(targets);
-       mapRef.current.fitBounds(bounds, { 
+       map.fitBounds(bounds, { 
          padding: [80, 80],
          maxZoom: 16,
          animate: true
        });
     } else if (targets.length === 1) {
-       mapRef.current.setView(targets[0], 16, { animate: true });
+       map.setView(targets[0], 16, { animate: true });
     }
-  }, [driverLocation, pickupLocation, dropoffLocation]);
+  }, [driverLocation, pickupLocation, dropoffLocation, stops, selectingLocation]);
 
   // Route Lifecycle: Update routing and polylines
   useEffect(() => {

@@ -3,6 +3,7 @@ import APIClient, { APIUser, APIRide } from '../lib/api';
 import { searchAddresses, formatAddress, GeocodingResult } from '../lib/geocoding';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
+import { PostRideSummary } from './PostRideSummary';
 
 // --- Constants ---
 const VEHICLE_RATES: Record<string, { base: number, km: number, min: number }> = { 
@@ -127,9 +128,12 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     if (activeRideOverride) {
       setActiveRide(activeRideOverride);
       setStep('tracking');
-    } else if (step === 'tracking') {
-      setActiveRide(null);
-      setStep('service');
+    } else if (step === 'tracking' && !activeRideOverride) {
+      // Solo regresamos a service si localmente tampoco tenemos un viaje activo
+      // Esto evita el reset durante el pequeño lapso entre la creación del viaje y el primer poll exitoso
+      if (!activeRide) {
+        setStep('service');
+      }
     }
   }, [activeRideOverride]);
 
@@ -215,7 +219,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       const rate = VEHICLE_RATES[vehicleType] || VEHICLE_RATES['car'];
       const price = Math.ceil(rate.base + (dist * rate.km) + (duration * rate.min));
 
-      await APIClient.requestRide({
+      const newRide = await APIClient.requestRide({
         pickup: { lat: pickupLocation[0], lng: pickupLocation[1], address: pickupAddress },
         dropoff: { lat: dropoffLocation[0], lng: dropoffLocation[1], address: dropoffAddress },
         type: rideType === 'errand' ? 'errand' : 'ride',
@@ -225,6 +229,8 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
         description: errandDescription,
         items: '',
       });
+      
+      setActiveRide(newRide);
       setStep('tracking');
       showToast('Buscando conductor...', 'success');
     } catch (err: unknown) {
@@ -248,7 +254,6 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     try {
         await APIClient.cancelRide(id);
         showToast('Viaje cancelado', 'info');
-        // Reset local state and return home
         setActiveRide(null);
         setStep('service');
         onPlanningClose?.(); 
@@ -267,6 +272,21 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       'completed': 'Llegaste a tu destino',
       'cancelled': 'Viaje cancelado'
     };
+
+    if (activeRide.status === 'completed') {
+      return (
+        <div className="ride-request-sheet fade-in">
+           <PostRideSummary 
+             ride={activeRide} 
+             onClose={() => {
+               setActiveRide(null);
+               setStep('service');
+               onPlanningClose?.();
+             }} 
+           />
+        </div>
+      );
+    }
 
     return (
       <div className="ride-request-sheet fade-in">

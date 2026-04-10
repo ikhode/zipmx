@@ -24,27 +24,96 @@ const renderSubViewHeader = (title: string, onBack: () => void) => (
 
 // --- Stable Sub-View Components (Defined OUTSIDE to prevent remounting/flicker) ---
 
-const WalletView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
-  <div className="wallet-view fade-in">
-    {renderSubViewHeader('Billetera', onBack)}
-    <div className="premium-card-wallet" style={{ background: 'var(--text)', color: 'white', borderRadius: '24px', padding: '32px', marginBottom: '32px', boxShadow: 'var(--shadow-premium)' }}>
-      <div style={{ opacity: 0.7, fontSize: '14px', marginBottom: '8px' }}>Saldo disponible</div>
-      <div style={{ fontSize: '42px', fontWeight: 900 }}>$0.00</div>
+const WalletView: React.FC<{ onBack: () => void, driverData: any }> = ({ onBack, driverData }) => {
+  const isDriver = driverData !== null;
+  const balance = isDriver ? (driverData.totalEarnings || 0) : 0;
+  const commission = isDriver ? (driverData.unpaidCommissionAmount || 0) : 0;
+
+  // Simulate recent transactions for MVP visual completeness
+  const transactions = useMemo(() => [
+    { id: '1', type: 'Ingreso', desc: 'Viaje finalizado #1289', amount: balance * 0.4, date: 'Hoy, 2:45 PM' },
+    { id: '2', type: 'Comisión', desc: 'Retención de servicio Zipp', amount: -(commission * 0.5), date: 'Hoy, 10:15 AM' },
+    { id: '3', type: 'Ingreso', desc: 'Viaje finalizado #1287', amount: balance * 0.6, date: 'Ayer, 8:20 PM' }
+  ].filter(t => balance > 0 || (isDriver && t.type === 'Comisión' && commission > 0)), [balance, commission, isDriver]);
+
+  return (
+    <div className="wallet-view fade-in">
+      {renderSubViewHeader('Billetera', onBack)}
+      
+      <div className="premium-card-wallet wallet-gradient-card" style={{ 
+        background: 'linear-gradient(135deg, #111827 0%, #374151 100%)', 
+        color: 'white', 
+        borderRadius: '28px', 
+        padding: '32px', 
+        marginBottom: '32px', 
+        boxShadow: '0 20px 40px rgba(0,0,0,0.12)',
+        position: 'relative',
+        overflow: 'hidden'
+      }}>
+        <div className="card-shine" style={{ position: 'absolute', top: '-50%', left: '-50%', width: '200%', height: '200%', background: 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 60%)', pointerEvents: 'none' }}></div>
+        <div style={{ opacity: 0.7, fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
+          {isDriver ? 'Ganancias Totales' : 'Saldo Zipp Cash'}
+        </div>
+        <div style={{ fontSize: '48px', fontWeight: 900, letterSpacing: '-0.02em' }}>
+          ${balance.toFixed(2)}
+        </div>
+        {isDriver && commission > 0 && (
+          <div className="commission-badge-premium" style={{ 
+            marginTop: '20px', 
+            background: 'rgba(239, 68, 68, 0.15)', 
+            backdropFilter: 'blur(10px)',
+            padding: '10px 16px', 
+            borderRadius: '14px', 
+            fontSize: '13px', 
+            fontWeight: 700,
+            border: '1px solid rgba(239, 68, 68, 0.2)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span style={{ color: '#FCA5A5' }}>⚠️ Pendiente:</span>
+            <span>${commission.toFixed(2)}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="wallet-actions" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '40px' }}>
+         <button className="wallet-btn-premium active-scale" style={{ background: '#F3F4F6', padding: '24px 16px', borderRadius: '22px', border: 'none', textAlign: 'center' }}>
+            <div style={{ fontSize: '28px', marginBottom: '8px' }}>🏦</div>
+            <div style={{ fontWeight: 800, fontSize: '14px', color: '#111827' }}>Recargar</div>
+         </button>
+         <button className="wallet-btn-premium active-scale" style={{ background: '#F3F4F6', padding: '24px 16px', borderRadius: '22px', border: 'none', textAlign: 'center' }}>
+            <div style={{ fontSize: '28px', marginBottom: '8px' }}>📤</div>
+            <div style={{ fontWeight: 800, fontSize: '14px', color: '#111827' }}>Retirar</div>
+         </button>
+      </div>
+
+      <h3 style={{ fontSize: '18px', fontWeight: 900, marginBottom: '20px', color: '#111827' }}>Actividad reciente</h3>
+      <div className="transaction-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {transactions.length === 0 ? (
+          <div style={{ opacity: 0.4, textAlign: 'center', padding: '60px 0', fontWeight: 600 }}>No hay transacciones todavía</div>
+        ) : (
+          transactions.map(t => (
+            <div key={t.id} className="transaction-item fade-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#F8FAFC', borderRadius: '18px' }}>
+               <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: t.amount > 0 ? '#DCFCE7' : '#FEE2E2', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+                    {t.amount > 0 ? '💰' : '📉'}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: '15px', color: '#1F2937' }}>{t.desc}</div>
+                    <div style={{ fontSize: '12px', color: '#6B7280', fontWeight: 600 }}>{t.date}</div>
+                  </div>
+               </div>
+               <div style={{ fontWeight: 900, fontSize: '16px', color: t.amount > 0 ? '#10B981' : '#EF4444' }}>
+                 {t.amount > 0 ? '+' : ''}${Math.abs(t.amount).toFixed(2)}
+               </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
-    <div className="wallet-actions" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '32px' }}>
-       <button className="wallet-btn" style={{ background: '#F3F4F6', padding: '20px', borderRadius: '16px', fontWeight: 700 }}>
-          <span style={{ display: 'block', fontSize: '20px', marginBottom: '4px' }}>💳</span>
-          Añadir fondos
-       </button>
-       <button className="wallet-btn" style={{ background: '#F3F4F6', padding: '20px', borderRadius: '16px', fontWeight: 700 }}>
-          <span style={{ display: 'block', fontSize: '20px', marginBottom: '4px' }}>💸</span>
-          Retirar
-       </button>
-    </div>
-    <h3 style={{ fontSize: '16px', fontWeight: 800, marginBottom: '16px' }}>Actividad reciente</h3>
-    <div style={{ opacity: 0.5, textAlign: 'center', padding: '40px 0' }}>No hay transacciones recientes</div>
-  </div>
-);
+  );
+};
 
 const TripsView: React.FC<{ onBack: () => void, onClose: () => void }> = ({ onBack, onClose }) => {
   const [rides, setRides] = useState<APIRide[]>([]);
@@ -546,8 +615,10 @@ const MainMenuView: React.FC<{
   currentMode: string, 
   hasActiveRide: boolean, 
   onAction: (v: ViewType) => void, 
-  onSwitchMode: () => void 
-}> = ({ userName, currentMode, hasActiveRide, onAction, onSwitchMode }) => (
+  onSwitchMode: () => void,
+  session: any,
+  driverData: any
+}> = ({ userName, currentMode, hasActiveRide, onAction, onSwitchMode, session, driverData }) => (
   <div className="main-menu-view fade-in">
     <div className="account-header" style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="user-info">
@@ -578,12 +649,27 @@ const MainMenuView: React.FC<{
       </div>
     </div>
 
-    <div className="zipp-cash-premium interactive-scale" onClick={() => onAction('wallet')} style={{ background: 'linear-gradient(135deg, #000 0%, #333 100%)', borderRadius: '24px', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'white', cursor: 'pointer', boxShadow: '0 10px 25px rgba(0,0,0,0.15)' }}>
+    <div className="zipp-cash-premium interactive-scale" onClick={() => onAction('wallet')} style={{ 
+      background: 'linear-gradient(135deg, #111827 0%, #1F2937 100%)', 
+      borderRadius: '24px', 
+      padding: '24px', 
+      marginBottom: '32px', 
+      display: 'flex', 
+      justifyContent: 'space-between', 
+      alignItems: 'center', 
+      color: 'white', 
+      cursor: 'pointer', 
+      boxShadow: '0 12px 30px rgba(0,0,0,0.1)' 
+    }}>
       <div className="cash-info">
-        <div className="cash-label" style={{ opacity: 0.7, fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 800, marginBottom: '4px' }}>Zipp Cash</div>
-        <div className="cash-amount" style={{ fontSize: '26px', fontWeight: 900 }}>$0.00</div>
+        <div className="cash-label" style={{ opacity: 0.6, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 800, marginBottom: '6px' }}>
+           {session?.user?.userType === 'driver' ? 'Ganancias Reportadas' : 'Zipp Cash'}
+        </div>
+        <div className="cash-amount" style={{ fontSize: '28px', fontWeight: 900, letterSpacing: '-0.02em' }}>
+           ${((session?.user?.userType === 'driver' ? driverData?.totalEarnings : 0) || 0).toFixed(2)}
+        </div>
       </div>
-      <div className="cash-arrow-premium" style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</div>
+      <div className="cash-arrow-premium" style={{ width: '44px', height: '44px', borderRadius: '14px', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>💰</div>
     </div>
 
     <div className="account-links-premium">
@@ -646,6 +732,14 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
     setView('menu');
   };
 
+  const [driverData, setDriverData] = useState<any>(null);
+
+  useEffect(() => {
+    if (session?.user?.userType === 'driver') {
+      APIClient.getDriverSettings().then(setDriverData).catch(console.error);
+    }
+  }, [session, view]);
+
   // We memoize current sub-view to prevent internal re-computations if props didn't change
   const currentView = useMemo(() => {
     switch (view) {
@@ -656,9 +750,11 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
                   hasActiveRide={hasActiveRide} 
                   onAction={handleAction} 
                   onSwitchMode={onSwitchMode} 
+                  session={session}
+                  driverData={driverData}
                 />;
       case 'wallet':
-        return <WalletView onBack={handleBack} />;
+        return <WalletView onBack={handleBack} driverData={driverData} />;
       case 'trips':
         return <TripsView onBack={handleBack} onClose={onClose} />;
       case 'help':

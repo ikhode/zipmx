@@ -524,7 +524,7 @@ app.get('/rides/my-active', authGuard, async (c) => {
   const activeRide = await db.query.rides.findFirst({
     where: and(
       eq(schema.rides.passengerId, payload.id),
-      inArray(schema.rides.status, ['requested', 'accepted', 'in_progress'])
+      inArray(schema.rides.status, ['requested', 'accepted', 'arrived', 'in_progress'])
     )
   });
   return c.json(activeRide || null);
@@ -628,7 +628,9 @@ app.get('/driver/settings', authGuard, async (c) => {
     baseFare: driver.baseFare,
     costPerKm: driver.costPerKm,
     costPerMinute: driver.costPerMinute,
-    totalTrips: driver.totalTrips
+    totalTrips: driver.totalTrips,
+    totalEarnings: driver.totalEarnings,
+    unpaidCommissionAmount: driver.unpaidCommissionAmount
   });
 });
 
@@ -668,7 +670,7 @@ app.get('/rides/active', authGuard, async (c) => {
   const activeRide = await db.query.rides.findFirst({
     where: and(
       eq(schema.rides.driverId, payload.id),
-      inArray(schema.rides.status, ['accepted', 'in_progress'])
+      inArray(schema.rides.status, ['accepted', 'arrived', 'in_progress'])
     ),
   });
   return c.json(activeRide || null);
@@ -723,6 +725,7 @@ app.post('/rides/:id/status', authGuard, async (c) => {
         // Update Driver Stats
         await db.update(schema.drivers).set({
           totalTrips: newTotalTrips,
+          totalEarnings: (driver.totalEarnings || 0) + (ride.totalFare || 0),
           unpaidCommissionAmount: (driver.unpaidCommissionAmount || 0) + commissionAmount
         }).where(eq(schema.drivers.id, driver.id));
       }
@@ -731,6 +734,43 @@ app.post('/rides/:id/status', authGuard, async (c) => {
   
   await db.update(schema.rides).set(update).where(eq(schema.rides.id, rideId));
   return c.json({ success: true });
+});
+
+// Ratings
+app.post('/rides/:id/rate', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const { ratedId, rating, comment } = await c.req.json();
+  const db = drizzle(c.env.DB, { schema });
+
+  if (!rating || rating < 1 || rating > 5) {
+    return c.json({ error: 'Calificación inválida (debe ser de 1 a 5)' }, 400);
+  }
+
+  try {
+    await db.insert(schema.ratings).values({
+      rideId,
+      raterId: payload.id,
+      ratedId,
+      rating,
+      comment
+    });
+
+    // Update global rating of the rated user if they are a driver
+    const driver = await db.query.drivers.findFirst({ where: eq(schema.drivers.id, ratedId) });
+    if (driver) {
+      const allRatings = await db.query.ratings.findMany({ where: eq(schema.ratings.ratedId, ratedId) });
+      const avgRating = allRatings.reduce((acc, curr) => acc + curr.rating, 0) / allRatings.length;
+      
+      await db.update(schema.drivers)
+        .set({ rating: avgRating })
+        .where(eq(schema.drivers.id, ratedId));
+    }
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
 });
 
 // Real-time & Security Endpoints
