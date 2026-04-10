@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useToast } from './ToastProvider';
 
 interface MapViewProps {
   center?: [number, number];
@@ -30,6 +31,7 @@ export function MapView({
   nearbyDrivers = [],
   flyToTrigger = 0,
 }: MapViewProps) {
+  const { showToast } = useToast();
   const [isDragging, setIsDragging] = useState(false);
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -402,8 +404,23 @@ export function MapView({
                   fetchRoute(attempt + 1);
                 }, 2000);
               } else {
-
                 console.warn("Routing Error after retry:", err.message);
+                
+                // --- FALLBACK VISUAL ---
+                if (!mapRef.current) return;
+                
+                // Draw a straight dotted line as fallback
+                const fallbackPoints = [pickupLocation!, ...stops, dropoffLocation!];
+                
+                routeLineRef.current = L.polyline(fallbackPoints, {
+                  color: '#94a3b8', // Gray slate
+                  weight: 3,
+                  opacity: 0.6,
+                  dashArray: '10, 10',
+                  lineJoin: 'round',
+                }).addTo(mapRef.current);
+
+                showToast("Routing servers are currently unavailable or timed out.", "info");
               }
             });
         };
