@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import APIClient, { APIUser } from './lib/api';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import APIClient, { APIUser, APIRide } from './lib/api';
 import { MapView } from './components/MapView';
 import { RideRequestSheet } from './components/RideRequestSheet';
+
+type SelectionType = 'none' | 'pickup' | 'dropoff' | { type: 'stop', index: number };
+
 import { PassengerHome } from './components/PassengerHome';
 import { PromoDetailsSheet } from './components/PromoDetailsSheet';
 import { AccountMenuSheet } from './components/AccountMenuSheet';
@@ -16,9 +19,10 @@ import { useToast } from './components/ToastProvider';
 import { triggerHaptic } from './lib/haptics';
 import { useLocationTracker } from './hooks/useLocationTracker';
 import { LegalPage } from './components/Legal';
+import { auth } from './lib/firebase';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
 type AppMode = 'passenger' | 'driver';
-type SelectionType = 'none' | 'pickup' | 'dropoff' | { type: 'stop', index: number };
 
 // --- Memoized Sub-components ---
 
@@ -42,9 +46,30 @@ const MapSelectionOverlay = React.memo(({
   );
 });
 
-const MemoizedMapView = React.memo(MapView);
-
 const DEFAULT_LOCATION: [number, number] = [18.9113, -103.8743];
+
+const PrivacyNotice = ({ onAccept }: { onAccept: () => void }) => (
+  <div className="privacy-notice-overlay fade-in">
+    <div className="privacy-card-premium stagger-in">
+      <div className="privacy-icon">📍</div>
+      <h3>Tu privacidad es clave</h3>
+      <p>
+        Zipp utiliza tu ubicación en <b>segundo plano</b> para:
+      </p>
+      <ul className="privacy-list">
+        <li>Conectarte con conductores cercanos.</li>
+        <li>Permitir el seguimiento del viaje en tiempo real por seguridad.</li>
+        <li>Calcular tarifas precisas basadas en la distancia.</li>
+      </ul>
+      <p className="privacy-footer">
+        Tus datos están protegidos y solo se usan para mejorar tu experiencia de movilidad.
+      </p>
+      <button className="confirm-primary-btn" onClick={onAccept}>
+        Entendido y aceptar
+      </button>
+    </div>
+  </div>
+);
 
 export default function App() {
   const { showToast } = useToast();
@@ -53,6 +78,14 @@ export default function App() {
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [selectionMode, setSelectionMode] = useState<SelectionType>('none');
   const [planningStarted, setPlanningStarted] = useState(false);
+  
+  // Refs to fix stale closures in watchPosition
+  const planningStartedRef = useRef(planningStarted);
+  const selectionModeRef = useRef(selectionMode);
+  
+  useEffect(() => { planningStartedRef.current = planningStarted; }, [planningStarted]);
+  useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
+
   const [showPromoDetails, setShowPromoDetails] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [currentRideType, setCurrentRideType] = useState<'ride' | 'errand' | 'taxi' | 'mototaxi'>('ride');
@@ -60,6 +93,7 @@ export default function App() {
   // User's real GPS location
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [geoLoading, setGeoLoading] = useState(true);
+  const [privacyAccepted, setPrivacyAccepted] = useState(() => localStorage.getItem('zipp_privacy_accepted') === 'true');
   
   // Splash Screen State
   const [showSplash, setShowSplash] = useState(true);
@@ -81,12 +115,34 @@ export default function App() {
   const [hasActiveRide, setHasActiveRide] = useState(false);
   const [showVerificationSheet, setShowVerificationSheet] = useState<{ type: 'passenger' | 'driver' } | null>(null);
   const [showQuickAuth, setShowQuickAuth] = useState(false);
+  const [showAuthSheet, setShowAuthSheet] = useState(false);
+  const [authReason, setAuthReason] = useState<string | undefined>();
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
   const [flyToTrigger, setFlyToTrigger] = useState(0);
   const [driverIsOnline, setDriverIsOnline] = useState(false);
   const [showLegal, setShowLegal] = useState<string | null>(null);
+  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const lastSelectionMode = React.useRef<SelectionType>('none');
-  
+   
+   // Polling for active ride
+   useEffect(() => {
+     if (!session) return;
+     const poll = async () => {
+       try {
+         const ride = mode === 'driver' 
+           ? await APIClient.getActiveRide()
+           : await APIClient.getMyActiveRide();
+         setActiveRide(ride);
+         setHasActiveRide(!!ride);
+       } catch (err) {
+         console.error('[App] Active ride polling error:', err);
+       }
+     };
+     poll();
+     const interval = setInterval(poll, 5000);
+     return () => clearInterval(interval);
+   }, [session, mode]);
+
   // Real-time Tracker
   const { nearbyDrivers: realTimeDrivers, updateLocation } = useLocationTracker(
     mode, 
@@ -94,13 +150,31 @@ export default function App() {
     mode === 'driver' && driverIsOnline
   );
 
-  const onLoginRequired = (type: 'passenger' | 'driver') => {
+   // Compute focused driver position for passengers
+   const activeRideDriverLocation = useMemo(() => {
+     if (mode === 'passenger' && activeRide?.driverId) {
+       const driver = realTimeDrivers.find(d => d.id === activeRide.driverId);
+       if (driver?.currentLatitude && driver?.currentLongitude) {
+         return [driver.currentLatitude, driver.currentLongitude] as [number, number];
+       }
+     }
+     return null;
+   }, [mode, activeRide, realTimeDrivers]);
+
+  const onLoginRequired = (type: 'passenger' | 'driver', reason?: string) => {
     setQuickAuthType(type);
-    setShowQuickAuth(true);
+    setAuthReason(reason);
+    setShowAuthSheet(true);
     triggerHaptic('medium');
   };
 
-  const handleOpenAuth = useCallback(() => onLoginRequired('passenger'), []);
+  const handleOpenAuth = useCallback(() => {
+    setShowAuthSheet(true);
+    triggerHaptic('medium');
+  }, []);
+
+  // User's last geocoded location to avoid excessive API calls
+  const lastGeocodedLocation = useRef<[number, number] | null>(null);
 
   // --- Geolocation: get user's real position and track it ---
   useEffect(() => {
@@ -115,25 +189,33 @@ export default function App() {
         const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude];
         setUserLocation(loc);
         
-        // Auto-set pickup to current location if not set yet
+        // Update pickup to current location if not set yet OR if not planning a ride
         setPickupLocation((prevPickup) => {
-          if (!prevPickup) {
-            setFlyToTrigger(prev => prev + 1);
-            reverseGeocode(loc[0], loc[1]).then((res) => {
-              if (res) setPickupAddress(formatAddress(res));
-              else setPickupAddress('Mi ubicación actual');
-            });
+          const isPlanning = planningStartedRef.current;
+          const sMode = selectionModeRef.current;
+
+          if (!prevPickup || (!isPlanning && sMode === 'none')) {
+            // Re-center map if this is the first real fix
+            if (!prevPickup) setFlyToTrigger(prev => prev + 1);
+            
+            // Only update address if not in map selection and user has moved significantly (> ~50m)
+            if (sMode === 'none' && !isPlanning) {
+              const last = lastGeocodedLocation.current;
+              const hasMovedSignificantly = !last || (Math.abs(last[0] - loc[0]) > 0.0005 || Math.abs(last[1] - loc[1]) > 0.0005);
+              
+              if (hasMovedSignificantly) {
+                lastGeocodedLocation.current = loc;
+                reverseGeocode(loc[0], loc[1]).then((res) => {
+                  if (res) setPickupAddress(formatAddress(res));
+                  else if (!pickupAddress) setPickupAddress('Mi ubicación actual');
+                });
+              }
+            }
             return loc;
           }
           return prevPickup;
         });
 
-        // Also update selectionInitialLocation if they just entered selection mode
-        setSelectionInitialLocation((prev) => {
-           if (prev && prev[0] === DEFAULT_LOCATION[0]) return loc;
-           return prev;
-        });
-        
         setGeoLoading(false);
       },
       () => {
@@ -148,10 +230,8 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // --- Hash Based Routing ---
   useEffect(() => {
-    APIClient.getProfile().then(user => setSession(user ? { user } : null));
-
-    // --- Hash Based Routing ---
     const handleHashSync = () => {
       const hash = window.location.hash;
       if (hash === '#/profile') {
@@ -175,6 +255,34 @@ export default function App() {
         window.removeEventListener('popstate', handleHashSync);
     };
   }, [handleOpenAuth]);
+
+  // --- Firebase Auth & Session Sync ---
+  useEffect(() => {
+    // Import type User from firebase/auth
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          // Sync with backend using the ID token
+          const idToken = await firebaseUser.getIdToken();
+          // We use verifyOTP endpoint as a generic "sync" point if needed, 
+          // or a dedicated profile fetch that handles new users.
+          const user = await APIClient.verifyOTP(firebaseUser.phoneNumber || 'anonymous', idToken);
+          setSession({ user: user.user });
+        } catch (error) {
+          console.error('[SessionSync] Error:', error);
+        }
+      } else {
+        // No user? Sign in anonymously to ensure identity persists
+        try {
+          await signInAnonymously(auth);
+        } catch (error) {
+          console.error('[Auth] Anonymous SignIn failed:', error);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // Handle Splash Screen
   useEffect(() => {
@@ -205,6 +313,15 @@ export default function App() {
   }, [mode, driverIsOnline, userLocation, updateLocation]);
 
 
+  // Flag to know if we have already successfully centered on a real location for the current selection mode
+  const selectionHasRealLocation = useRef(false);
+  // Flag to track if the user has manually moved the map in the current selection session
+  const userInteractedRef = useRef(false);
+
+  const handleMapInteraction = useCallback(() => {
+    userInteractedRef.current = true;
+  }, []);
+
   // Set initial temp location when entering selection mode
   useEffect(() => {
     const isSameMode = (a: SelectionType, b: SelectionType) => {
@@ -213,30 +330,47 @@ export default function App() {
     };
 
     if (selectionMode !== 'none') {
-      if (isSameMode(lastSelectionMode.current, selectionMode)) return;
+      const modeChanged = !isSameMode(lastSelectionMode.current, selectionMode);
+      
+      // Reset interaction flag on mode change
+      if (modeChanged) {
+        userInteractedRef.current = false;
+        selectionHasRealLocation.current = false;
+      }
+      
+      // If user interacted manually, WE DO NOT AUTO-FOLLOW anymore for this session
+      if (userInteractedRef.current && selectionHasRealLocation.current) return;
+
       lastSelectionMode.current = selectionMode;
 
       let initial: [number, number] | null = null;
       let initialAddr = 'Buscando dirección...';
 
       if (selectionMode === 'pickup') {
-        initial = pickupLocation || userLocation;
+        initial = userLocation || pickupLocation;
         initialAddr = pickupAddress || 'Mi ubicación';
       } else if (selectionMode === 'dropoff') {
-        initial = dropoffLocation || pickupLocation || userLocation;
-        initialAddr = dropoffAddress || pickupAddress || 'Ubicación actual';
+        initial = dropoffLocation || userLocation || pickupLocation;
+        initialAddr = dropoffAddress || '¿A dónde vas?';
       } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
-        initial = stops[selectionMode.index]?.position || pickupLocation || userLocation;
+        initial = stops[selectionMode.index]?.position || userLocation || pickupLocation;
         initialAddr = stops[selectionMode.index]?.address || 'Nueva parada';
       }
 
-      const loc: [number, number] = initial || userLocation || DEFAULT_LOCATION;
+      // If we got a real location from state (not using the fallback), mark as real
+      if (initial) {
+        selectionHasRealLocation.current = true;
+      }
+
+      const loc: [number, number] = initial || DEFAULT_LOCATION;
       setTempLocation(loc);
       setTempAddress(initialAddr);
       setSelectionInitialLocation(loc);
       setFlyToTrigger(prev => prev + 1);
     } else {
       lastSelectionMode.current = 'none';
+      selectionHasRealLocation.current = false;
+      userInteractedRef.current = false;
       setSelectionInitialLocation(null);
       setTempLocation(null);
       setTempAddress('Buscando dirección...');
@@ -257,10 +391,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [tempLocation, selectionMode]);
 
-  const handleLocationSelected = useCallback((loc: [number, number]) => {
-    setTempLocation(loc);
-  }, []);
-
   const confirmSelection = useCallback(() => {
     if (!tempLocation) return;
     
@@ -277,8 +407,6 @@ export default function App() {
     }
     setSelectionMode('none');
   }, [tempLocation, tempAddress, selectionMode, stops]);
-
-  const stopPositions = useMemo<[number, number][]>(() => stops.map(s => s.position), [stops]);
 
   const mapCenter = useMemo<[number, number]>(() => {
     if (selectionMode !== 'none' && selectionInitialLocation) return selectionInitialLocation;
@@ -372,14 +500,17 @@ export default function App() {
     <div className={`app-container ${mode === 'passenger' && !pickupLocation && !dropoffLocation && selectionMode === 'none' ? 'is-home' : ''}`}>
       <StatusBanner />
       <div className="map-wrapper">
-        <MemoizedMapView 
+        <MapView 
           center={mapCenter}
-          pickupLocation={pickupLocation || undefined}
-          dropoffLocation={dropoffLocation || undefined}
-          stops={stopPositions}
+          zoom={15}
+          pickupLocation={pickupLocation || (activeRide ? [activeRide.pickupLatitude, activeRide.pickupLongitude] : undefined)}
+          dropoffLocation={dropoffLocation || (activeRide ? [activeRide.dropoffLatitude, activeRide.dropoffLongitude] : undefined)}
+          driverLocation={mode === 'driver' ? (userLocation || undefined) : (activeRideDriverLocation || undefined)}
+          stops={stops.map(s => s.position)}
           selectingLocation={selectionMode !== 'none'}
-          nearbyDrivers={mode === 'passenger' ? realTimeDrivers : []}
-          onLocationSelected={handleLocationSelected}
+          onLocationSelected={(loc) => setTempLocation(loc)}
+          onMapInteraction={handleMapInteraction}
+          nearbyDrivers={realTimeDrivers}
           flyToTrigger={flyToTrigger}
         />
       </div>
@@ -394,13 +525,13 @@ export default function App() {
               <>
                 <button 
                   className="zipp-login-link interactive-scale" 
-                  onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
+                  onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}
                 >
                   Inicia sesión
                 </button>
                 <button 
                   className="zipp-signup-btn interactive-scale" 
-                  onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}
+                  onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}
                 >
                   Regístrate
                 </button>
@@ -449,12 +580,9 @@ export default function App() {
                   <div className="sheet-handle-minimal"></div>
                   {!session && !hasActiveRide && (
                     <div className="guest-cta-minimal fade-in">
-                      <span className="pill-badge">Explora Zipp</span>
-                      <p>Identifícate para proteger tu viaje y ver precios exactos</p>
-                      <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setQuickAuthType('passenger'); setShowQuickAuth(true); }}>INICIAR SESIÓN</button>
+                       <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}>INICIAR SESIÓN</button>
                     </div>
                   )}
-                  
                   <RideRequestSheet
                     session={session}
                     initialPlanning={planningStarted}
@@ -469,6 +597,7 @@ export default function App() {
                     onStopsChange={setStops}
                     onStartMapSelection={(mode: any) => { triggerHaptic('medium'); setSelectionMode(mode); }}
                     onRideTypeChange={setCurrentRideType}
+                    rideType={currentRideType}
                     onLoginRequired={() => onLoginRequired('passenger')}
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
                     onHeaderVisibilityChange={setIsHeaderHidden}
@@ -476,6 +605,7 @@ export default function App() {
                     userLocation={userLocation}
                     geoLoading={geoLoading}
                     onUseMyLocation={handleUseMyLocation}
+                    activeRideOverride={activeRide || undefined}
                   />
                 </div>
               </>
@@ -487,6 +617,8 @@ export default function App() {
                  onActiveRideChange={setHasActiveRide} 
                  onLoginRequired={() => onLoginRequired('driver')}
                  onOnlineChange={setDriverIsOnline}
+                 onUserUpdate={(user) => setSession({ user })}
+                 activeRideOverride={activeRide || undefined}
                />
              </div>
           )}
@@ -510,7 +642,7 @@ export default function App() {
           onClose={() => setShowQuickAuth(false)}
           onShowFullAuth={() => {
             setShowQuickAuth(false);
-            setShowModeSelector(true);
+            setShowAuthSheet(true);
           }}
         />
       )}
@@ -581,9 +713,7 @@ export default function App() {
           </div>
           
           <div className="auth-footer-minimal">
-            {!session ? (
-              <Auth />
-            ) : (
+            {session && (
               <button className="cancel-link-btn interactive-scale" onClick={() => { triggerHaptic('medium'); APIClient.logout(); window.location.reload(); }}>
                 Cerrar Sesión
               </button>
@@ -591,6 +721,21 @@ export default function App() {
           </div>
         </div>
       </BottomSheet>
+
+      {showAuthSheet && (
+        <BottomSheet
+          isOpen={!!showAuthSheet}
+          onClose={() => setShowAuthSheet(false)}
+          snapPoints={[0.85]}
+          initialSnap={0}
+        >
+          <Auth 
+            onSuccess={(user) => { setSession({ user }); setShowAuthSheet(false); setAuthReason(undefined); }}
+            initialMode={quickAuthType}
+            reason={authReason}
+          />
+        </BottomSheet>
+      )}
 
       <BottomSheet
         isOpen={!!showVerificationSheet}
@@ -619,6 +764,13 @@ export default function App() {
               <div className="splash-loader-bar"><div className="splash-loader-progress"></div></div>
            </div>
         </div>
+      )}
+
+      {(!privacyAccepted && !showSplash) && (
+        <PrivacyNotice onAccept={() => {
+          localStorage.setItem('zipp_privacy_accepted', 'true');
+          setPrivacyAccepted(true);
+        }} />
       )}
     </div>
   );

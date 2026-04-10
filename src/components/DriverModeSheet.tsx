@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import APIClient, { APIRide } from '../lib/api';
+import APIClient, { APIUser, APIRide } from '../lib/api';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
 
 interface DriverModeSheetProps {
-  session: any;
+  session: { user: APIUser } | null;
   onActiveRideChange?: (active: boolean) => void;
-  onLoginRequired: () => void;
+  onLoginRequired: (reason?: string) => void;
   onOnlineChange?: (online: boolean) => void;
+  onUserUpdate?: (user: APIUser) => void;
+  activeRideOverride?: APIRide;
 }
 
 type VehicleType = 'car' | 'motorcycle' | 'bicycle' | 'rickshaw' | 'taxi' | 'skates';
@@ -20,7 +22,7 @@ interface RideCardProps {
   onComplete?: () => void;
 }
 
-const RideCard = React.memo(({ ride, onAccept, onArrive, onStart, onComplete }: RideCardProps) => {
+const RideCard = React.memo(({ ride, onAccept }: RideCardProps) => {
   const isActionable = ride.status === 'requested' || ride.status === 'accepted' || ride.status === 'arrived' || ride.status === 'in_progress';
 
   return (
@@ -35,24 +37,117 @@ const RideCard = React.memo(({ ride, onAccept, onArrive, onStart, onComplete }: 
         {ride.status === 'requested' && onAccept && (
           <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onAccept(ride.id); }}>ACEPTAR</button>
         )}
-        {ride.status === 'accepted' && onArrive && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onArrive(); }}>LLEGUÉ</button>
-        )}
-        {ride.status === 'arrived' && onStart && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onStart(); }}>INICIAR</button>
-        )}
-        {ride.status === 'in_progress' && onComplete && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('success'); onComplete(); }} style={{ background: '#10B981', color: 'white' }}>FINALIZAR</button>
-        )}
       </div>
     </div>
   );
 });
 
-export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange }: DriverModeSheetProps) {
+const ActiveRideFocused = ({ 
+  ride, 
+  onArrive, 
+  onStart, 
+  onComplete 
+}: { 
+  ride: APIRide, 
+  onArrive: () => void, 
+  onStart: () => void, 
+  onComplete: () => void 
+}) => {
+  return (
+    <div className="active-ride-detail-view state-transition-enter" key={ride.status}>
+      <div className="glass-v2-card stagger-in" style={{ padding: '24px', marginBottom: '16px' }}>
+        <div className="active-trip-header">
+          <div className="trip-type-badge">
+            <span>{ride.rideType === 'ride' ? '🚗 VIAJE' : '📦 ENVÍO'}</span>
+            <div className="pulse-indicator"></div>
+          </div>
+          <div className="trip-fare-premium">${ride.totalFare}</div>
+        </div>
+
+        <div className="trip-locations-focused" style={{ marginTop: '20px' }}>
+          <div className="focused-addr-row">
+            <div className="addr-dot-focused"></div>
+            <div className="addr-info-focused">
+              <div className="addr-label-focused">Recogida</div>
+              <div className="addr-text-focused">{ride.pickupAddress.split(',')[0]}</div>
+            </div>
+          </div>
+
+          <div className="focused-addr-row" style={{ marginTop: '16px' }}>
+            <div className="addr-dot-focused dest"></div>
+            <div className="addr-info-focused">
+              <div className="addr-label-focused">Destino</div>
+              <div className="addr-text-focused">{ride.dropoffAddress.split(',')[0]}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="trip-actions-grid" style={{ marginTop: '32px' }}>
+          {ride.status === 'accepted' && (
+            <button className="action-btn-premium arrive interactive-scale" onClick={() => { triggerHaptic('medium'); onArrive(); }}>
+              <span>Llegué al punto</span>
+              <span>📍</span>
+            </button>
+          )}
+          {ride.status === 'arrived' && (
+            <button className="action-btn-premium start interactive-scale attention-pulse-bg" style={{ backgroundColor: 'transparent', backgroundImage: 'linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)' }} onClick={() => { triggerHaptic('success'); onStart(); }}>
+              <span>Iniciar Viaje</span>
+              <span>🚀</span>
+            </button>
+          )}
+          {ride.status === 'in_progress' && (
+            <button className="action-btn-premium complete interactive-scale" onClick={() => { triggerHaptic('success'); onComplete(); }}>
+              <span>Finalizar Viaje</span>
+              <span>🏁</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="stagger-in" style={{ animationDelay: '0.3s' }}>
+        <div style={{ display: 'flex', gap: '12px' }}>
+           <button className="premium-auth-btn interactive-scale" style={{ flex: 1, padding: '16px', borderRadius: '16px', justifyContent: 'center', background: 'white', color: 'black', border: '1px solid #E5E7EB' }} onClick={() => window.open(`tel:${ride.passengerId.substring(0, 10)}`)}>
+             <span style={{ fontSize: '18px', marginRight: '8px' }}>📞</span>
+             <span style={{ fontWeight: 800 }}>Llamar Pasajero</span>
+           </button>
+           <button className="premium-auth-btn interactive-scale" style={{ flex: 1, padding: '16px', borderRadius: '16px', justifyContent: 'center', background: 'white', color: 'black', border: '1px solid #E5E7EB' }}>
+             <span style={{ fontSize: '18px', marginRight: '8px' }}>💬</span>
+             <span style={{ fontWeight: 800 }}>Enviar Chat</span>
+           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const AcceptanceSplash = ({ onFinish }: { onFinish: () => void }) => {
+  useEffect(() => {
+    const timer = setTimeout(onFinish, 1500);
+    return () => clearTimeout(timer);
+  }, [onFinish]);
+
+  return (
+    <div className="acceptance-splash-overlay" onClick={onFinish}>
+      <div className="acceptance-checkmark-anim">✓</div>
+      <h2 style={{ fontSize: '28px', fontWeight: 900, marginBottom: '8px' }}>¡Viaje Aceptado!</h2>
+      <p style={{ opacity: 0.8, fontWeight: 600 }}>Cargando detalles del pasajero...</p>
+    </div>
+  );
+};
+
+export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange, onUserUpdate, activeRideOverride }: DriverModeSheetProps) {
   const { showToast } = useToast();
   const [rides, setRides] = useState<APIRide[]>([]);
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  const [showAcceptanceSplash, setShowAcceptanceSplash] = useState(false);
+
+  useEffect(() => {
+    if (activeRideOverride) {
+      setActiveRide(activeRideOverride);
+    } else {
+      setActiveRide(null);
+    }
+  }, [activeRideOverride]);
 
   useEffect(() => {
     onActiveRideChange?.(!!activeRide);
@@ -63,19 +158,15 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   useEffect(() => {
     onOnlineChange?.(isOnline);
   }, [isOnline, onOnlineChange]);
-  const [needsSetup, setNeedsSetup] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(session?.user?.userType === 'passenger');
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
   const [loading, setLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!session) return;
     try {
-      const [ridesData, activeRideData] = await Promise.all([
-        APIClient.getAvailableRides(),
-        APIClient.getActiveRide()
-      ]);
+      const ridesData = await APIClient.getAvailableRides();
       if (ridesData) setRides(ridesData);
-      if (activeRideData) setActiveRide(activeRideData);
     } catch (error) {
       console.error('Fetch error:', error);
     }
@@ -88,10 +179,22 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     }
 
     const checkSetup = async () => {
+      // If we already know the user is a driver from the session, we don't need setup grid
+      if (session.user.userType === 'driver') {
+        setNeedsSetup(false);
+        // Still fetch to get isActive status
+        const driver = await APIClient.getDriverSetup();
+        if (driver) setIsOnline(driver.isActive);
+        return;
+      }
+
       try {
         const driver = await APIClient.getDriverSetup();
         if (!driver) setNeedsSetup(true);
-        else setIsOnline(driver.isActive);
+        else {
+          setNeedsSetup(false);
+          setIsOnline(driver.isActive);
+        }
       } catch {
         setNeedsSetup(true);
       }
@@ -106,8 +209,8 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   }, [session, fetchData, isOnline, activeRide]);
 
   const setupDriver = async () => {
-    if (!session) {
-      onLoginRequired();
+    if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+      onLoginRequired('Identifícate para empezar a conducir');
       return;
     }
     setLoading(true);
@@ -115,11 +218,20 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     try {
       const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
       await APIClient.setupDriver(mappedType as any);
+      
+      // Refresh profile to get updated userType: 'driver'
+      const updatedUser = await APIClient.getProfile();
+      if (updatedUser) {
+        onUserUpdate?.(updatedUser);
+      }
+      
       setNeedsSetup(false);
       setIsOnline(true);
       showToast('¡Configuración completada!', 'success');
-    } catch (error: any) {
-      showToast(error.message || 'Error en configuración', 'error');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Error en configuración';
+      console.error('[DriverModeSheet] Setup failed:', error);
+      showToast(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -135,25 +247,38 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
           triggerHaptic('success');
       }
       fetchData();
-    } catch (err: any) {
-      showToast(err.message || 'Error al actualizar estado', 'error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error al actualizar estado';
+      showToast(message, 'error');
     }
   }, [activeRide, fetchData, showToast]);
 
   const handleAcceptRide = useCallback(async (id: string) => {
     triggerHaptic('success');
+    setLoading(true);
     try {
       await APIClient.acceptRide(id);
-      showToast('Viaje aceptado', 'success');
+      setShowAcceptanceSplash(true);
+      
+      // Intentar obtener el viaje activo inmediatamente para una transición fluida
+      // Esto complementa el polling de App.tsx pero lo hace instantáneo aquí
+      const active = await APIClient.getActiveRide();
+      if (active) {
+        setActiveRide(active);
+      }
+      
       fetchData();
-    } catch (error: any) {
-      showToast(error.message || 'Error al aceptar viaje', 'error');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Error al aceptar viaje';
+      showToast(message, 'error');
+    } finally {
+      setLoading(false);
     }
   }, [fetchData, showToast]);
 
   const toggleOnline = () => {
-    if (!session) {
-      onLoginRequired();
+    if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+      onLoginRequired('Identifícate para empezar a conducir');
       return;
     }
     triggerHaptic('medium');
@@ -202,19 +327,27 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
 
   return (
     <div className="driver-mode-sheet premium-card-anim stagger-in">
+      {showAcceptanceSplash && <AcceptanceSplash onFinish={() => setShowAcceptanceSplash(false)} />}
       <div className="driver-status-bar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '40px' }}>
           <button 
-              className={`status-toggle-pill interactive-scale ${isOnline ? 'online' : 'offline'}`} 
+              className={`status-toggle-pill interactive-scale ${isOnline ? 'online' : 'offline'} glass-v2-card`} 
               onClick={toggleOnline}
+              style={{ padding: '12px 24px', borderRadius: '100px', fontWeight: 900, fontSize: '14px', letterSpacing: '0.05em' }}
           >
-            {isOnline ? 'ESTÁS EN LÍNEA 🟢' : 'DESCONECTADO 🔴'}
+            {isOnline ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div className="pulse-indicator"></div>
+                EN LÍNEA
+              </span>
+            ) : (
+              <span style={{ opacity: 0.6 }}>DESCONECTADO</span>
+            )}
           </button>
       </div>
 
       {activeRide ? (
         <div className="active-ride-section">
-          <h3 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px' }}>Viaje Activo</h3>
-          <RideCard 
+          <ActiveRideFocused 
             ride={activeRide} 
             onArrive={() => handleUpdateStatus('arrived')}
             onStart={() => handleUpdateStatus('in_progress')} 

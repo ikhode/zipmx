@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import APIClient from '../lib/api';
+import React, { useState, useMemo, useEffect } from 'react';
+import APIClient, { APIRide } from '../lib/api';
 import { triggerHaptic } from '../lib/haptics';
 import { useToast } from './ToastProvider';
 
@@ -46,20 +46,115 @@ const WalletView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
   </div>
 );
 
-const TripsView: React.FC<{ onBack: () => void, onClose: () => void }> = ({ onBack, onClose }) => (
-  <div className="trips-view fade-in">
-    {renderSubViewHeader('Tus Viajes', onBack)}
-    <div className="trips-tabs" style={{ display: 'flex', gap: '24px', borderBottom: '1px solid #EEE', marginBottom: '24px' }}>
-       <div style={{ paddingBottom: '12px', borderBottom: '2px solid black', fontWeight: 800 }}>Pasados</div>
-       <div style={{ paddingBottom: '12px', opacity: 0.5, fontWeight: 700 }}>Programados</div>
+const TripsView: React.FC<{ onBack: () => void, onClose: () => void }> = ({ onBack, onClose }) => {
+  const [rides, setRides] = useState<APIRide[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    APIClient.getMyRides().then(data => {
+      if (mounted) {
+        setRides(data || []);
+        setLoading(false);
+      }
+    }).catch(e => {
+      console.error('Error fetching rides', e);
+      if (mounted) setLoading(false);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      requested: 'Buscando conductor',
+      accepted: 'Aceptado',
+      arrived: 'Conductor llegó',
+      in_progress: 'En curso',
+      completed: 'Completado',
+      cancelled: 'Cancelado',
+    };
+    return labels[status] || status;
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return '#10B981';
+      case 'cancelled': return '#EF4444';
+      case 'in_progress':
+      case 'arrived':
+      case 'accepted': return '#3B82F6';
+      default: return '#6B7280';
+    }
+  };
+
+  return (
+    <div className="trips-view fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {renderSubViewHeader('Tus Viajes', onBack)}
+      
+      <div className="trips-tabs" style={{ display: 'flex', gap: '24px', borderBottom: '1px solid #E5E7EB', marginBottom: '24px' }}>
+         <div style={{ paddingBottom: '12px', borderBottom: '2px solid black', fontWeight: 800 }}>Pasados</div>
+         <div style={{ paddingBottom: '12px', opacity: 0.5, fontWeight: 700 }}>Programados</div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '24px', msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {[1, 2, 3].map(i => (
+              <div key={i} className="skeleton-loader" style={{ height: '120px', borderRadius: '20px' }}></div>
+            ))}
+          </div>
+        ) : rides.length === 0 ? (
+          <div className="stagger-in" style={{ padding: '60px 20px', textAlign: 'center' }}>
+             <div style={{ fontSize: '48px', marginBottom: '16px', filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.1))' }}>🚗</div>
+             <p style={{ fontWeight: 800, fontSize: '18px', color: 'var(--text)', marginBottom: '8px' }}>Aún no hay viajes</p>
+             <p style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Tus viajes pasados y actuales aparecerán aquí.</p>
+             <button onClick={() => { triggerHaptic('medium'); onClose(); }} style={{ marginTop: '32px', background: 'var(--text)', color: 'white', padding: '16px 32px', borderRadius: '100px', fontWeight: 900, boxShadow: '0 8px 20px rgba(0,0,0,0.15)' }}>Pide un viaje ahora</button>
+          </div>
+        ) : (
+          <div className="stagger-in" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {rides.map((ride, i) => (
+              <div key={ride.id} className="interactive-scale glass-v2-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', animationDelay: `${i * 0.05}s` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                     <span style={{ fontSize: '20px' }}>{ride.rideType === 'ride' ? '🚗' : '📦'}</span>
+                     <span style={{ fontWeight: 800, fontSize: '15px' }}>
+                       {ride.createdAt ? new Date(ride.createdAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Fecha no disponible'}
+                     </span>
+                   </div>
+                   <span style={{ fontWeight: 800, fontSize: '16px' }}>${ride.totalFare}</span>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 0', borderTop: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--text)', marginTop: '6px' }}></div>
+                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ride.pickupAddress.split(',')[0]}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <div style={{ width: '8px', height: '8px', background: 'var(--accent-alt)', marginTop: '6px' }}></div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ride.dropoffAddress.split(',')[0]}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <span style={{ 
+                    fontSize: '12px', 
+                    fontWeight: 800, 
+                    color: getStatusColor(ride.status), 
+                    background: `${getStatusColor(ride.status)}15`, 
+                    padding: '4px 10px', 
+                    borderRadius: '100px' 
+                  }}>
+                    {getStatusLabel(ride.status)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
-    <div style={{ padding: '60px 20px', textAlign: 'center' }}>
-       <div style={{ fontSize: '40px', marginBottom: '16px' }}>🚗</div>
-       <p style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Aún no has realizado ningún viaje con ZIPP</p>
-       <button onClick={onClose} style={{ marginTop: '24px', background: 'var(--text)', color: 'white', padding: '12px 24px', borderRadius: '100px', fontWeight: 800 }}>Pide uno ahora</button>
-    </div>
-  </div>
-);
+  );
+};
 
 const SettingsView: React.FC<{ session: any, onBack: () => void, onVerify?: () => void, onUserUpdate?: (user: any) => void }> = ({ session, onBack, onVerify, onUserUpdate }) => {
   const user = session?.user;
@@ -204,7 +299,7 @@ const SettingsView: React.FC<{ session: any, onBack: () => void, onVerify?: () =
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section" style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', paddingLeft: '8px' }}>Preferencias</h3>
         <div className="settings-list-premium" style={{ background: '#F8FAFC', borderRadius: '24px', overflow: 'hidden' }}>
           {[
@@ -228,6 +323,43 @@ const SettingsView: React.FC<{ session: any, onBack: () => void, onVerify?: () =
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="settings-section">
+        <h3 style={{ fontSize: '13px', fontWeight: 800, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', paddingLeft: '8px' }}>Zona de Peligro</h3>
+        <div className="settings-list-premium" style={{ background: '#FFF1F2', borderRadius: '24px', overflow: 'hidden', border: '1px solid #FECACA' }}>
+          <div className="settings-item-premium interactive-scale" 
+            onClick={async () => {
+              triggerHaptic('error');
+              if (window.confirm('¿Estás COMPLETAMENTE seguro? Esta acción borrará todos tus viajes, saldo y datos permanentemente y no se puede deshacer.')) {
+                if (window.confirm('Confirmación final: ¿Realmente deseas eliminar tu cuenta de ZIPP?')) {
+                  try {
+                    await APIClient.deleteAccount();
+                    showToast('Cuenta eliminada correctamente', 'success');
+                    window.location.reload();
+                  } catch (e: any) {
+                    showToast(e.message, 'error');
+                  }
+                }
+              }
+            }}
+            style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              padding: '20px', 
+              cursor: 'pointer'
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '18px' }}>🗑️</span>
+              <span style={{ fontWeight: 800, fontSize: '15px', color: '#B91C1C' }}>Eliminar mi cuenta</span>
+            </div>
+            <span style={{ opacity: 0.3, color: '#B91C1C' }}>›</span>
+          </div>
+        </div>
+        <p style={{ padding: '16px', fontSize: '12px', color: '#991B1B', fontWeight: 600, opacity: 0.7 }}>
+          Al eliminar tu cuenta, todos tus datos personales serán borrados de nuestros servidores según nuestra política de privacidad exigida por Apple.
+        </p>
       </div>
     </div>
   );

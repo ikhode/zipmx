@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import APIClient, { APIRide } from '../lib/api';
+import APIClient, { APIUser, APIRide } from '../lib/api';
 import { searchAddresses, formatAddress, GeocodingResult } from '../lib/geocoding';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
@@ -23,7 +23,7 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 // --- Component ---
 
 interface RideRequestSheetProps {
-  session: any;
+  session: { user: APIUser } | null;
   initialPlanning?: boolean;
   onPlanningClose?: () => void;
   onPickupChange: (location: [number, number] | null, address?: string) => void;
@@ -36,7 +36,8 @@ interface RideRequestSheetProps {
   onStopsChange: (stops: { position: [number, number], address: string }[]) => void;
   onStartMapSelection: (type: 'pickup' | 'dropoff' | { type: 'stop', index: number }) => void;
   onRideTypeChange: (type: 'ride' | 'errand' | 'taxi' | 'mototaxi') => void;
-  onLoginRequired: () => void;
+  rideType: 'ride' | 'errand' | 'taxi' | 'mototaxi';
+  onLoginRequired: (reason?: string) => void;
   preSelectedVehicle?: string;
   onHeaderVisibilityChange: (hide: boolean) => void;
   onActiveRideChange?: (active: boolean) => void;
@@ -46,13 +47,29 @@ interface RideRequestSheetProps {
   geoLoading?: boolean;
   /** Callback to fill pickup or dropoff with the device's current location */
   onUseMyLocation?: (field: 'pickup' | 'dropoff') => Promise<void>;
+  activeRideOverride?: APIRide;
 }
+
+const RadarSearch = () => (
+  <div className="radar-view-focused fade-in">
+    <div className="radar-container-mini">
+      <div className="radar-circle"></div>
+      <div className="radar-circle"></div>
+      <div className="radar-circle"></div>
+      <div className="radar-center-icon">🔍</div>
+    </div>
+    <div style={{ textAlign: 'center', marginTop: '24px' }}>
+      <h3 style={{ fontSize: '18px', fontWeight: 900, marginBottom: '8px' }}>Buscando conductores</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '14px', fontWeight: 600 }}>Conectando con el auto más cercano...</p>
+    </div>
+  </div>
+);
 
 export function RideRequestSheet(props: RideRequestSheetProps) {
   const { 
     session, initialPlanning, onPlanningClose, onPickupChange, onDropoffChange, pickupLocation, pickupAddress, dropoffLocation, dropoffAddress,
-    stops, onStopsChange, onStartMapSelection, onRideTypeChange, onLoginRequired, preSelectedVehicle, onHeaderVisibilityChange, onActiveRideChange,
-    userLocation, geoLoading, onUseMyLocation
+    stops, onStopsChange, onStartMapSelection, onRideTypeChange, rideType, onLoginRequired, preSelectedVehicle, onHeaderVisibilityChange, onActiveRideChange,
+    userLocation, geoLoading, onUseMyLocation, activeRideOverride
   } = props;
 
   const { showToast } = useToast();
@@ -91,6 +108,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   }, [pickupLocation, dropoffLocation, isPlanning, step]);
 
   const [loading, setLoading] = useState(false);
+  const [errandDescription, setErrandDescription] = useState('');
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -106,25 +124,14 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   }, [focusedInput, isPlanning]);
 
   useEffect(() => {
-    if (!session) return;
-    const poll = async () => {
-      try {
-        const ride = await APIClient.getMyActiveRide();
-        if (ride) {
-          setActiveRide(ride);
-          setStep('tracking');
-        } else if (step === 'tracking') {
-          setStep('service');
-          setActiveRide(null);
-        }
-      } catch (err) {
-        console.error('Polling error:', err);
-      }
-    };
-    poll();
-    const interval = setInterval(poll, 5000);
-    return () => clearInterval(interval);
-  }, [session, step]);
+    if (activeRideOverride) {
+      setActiveRide(activeRideOverride);
+      setStep('tracking');
+    } else if (step === 'tracking') {
+      setActiveRide(null);
+      setStep('service');
+    }
+  }, [activeRideOverride]);
 
   useEffect(() => {
     onHeaderVisibilityChange(isPlanning || step === 'tracking');
@@ -194,8 +201,9 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
         return;
     }
     
-    if (!session) {
-      onLoginRequired();
+    if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+      if (session) showToast('Validación de teléfono requerida para solicitar viaje', 'info');
+      onLoginRequired('Validación requerida para pedir viaje');
       return;
     }
     
@@ -210,17 +218,18 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       await APIClient.requestRide({
         pickup: { lat: pickupLocation[0], lng: pickupLocation[1], address: pickupAddress },
         dropoff: { lat: dropoffLocation[0], lng: dropoffLocation[1], address: dropoffAddress },
-        type: 'ride',
+        type: rideType === 'errand' ? 'errand' : 'ride',
         price,
         distance: dist,
         duration,
-        description: '',
+        description: errandDescription,
         items: '',
       });
       setStep('tracking');
       showToast('Buscando conductor...', 'success');
-    } catch (err: any) {
-      showToast(err.message, 'error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido';
+      showToast(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -243,8 +252,9 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
         setActiveRide(null);
         setStep('service');
         onPlanningClose?.(); 
-    } catch (err: any) {
-        showToast(err.message, 'error');
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Error desconocido';
+        showToast(message, 'error');
     }
   };
 
@@ -260,31 +270,65 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
 
     return (
       <div className="ride-request-sheet fade-in">
-        <div className="tracking-view-minimal">
+        <div className="tracking-view-premium state-transition-enter" key={activeRide.status}>
           <div className="tracking-header-mini">
-            <h2 className="tracking-status-text">{statusMap[activeRide.status]}</h2>
-            {activeRide.status === 'requested' && <div className="mini-pulse"></div>}
+            <h2 className="tracking-status-text" style={{ 
+              color: activeRide.status === 'arrived' ? '#10B981' : 'var(--text)',
+              transition: 'color 0.4s ease'
+             }}>
+              {statusMap[activeRide.status]}
+            </h2>
+            <div className={`pulse-indicator ${activeRide.status === 'arrived' ? 'attention-pulse-bg' : ''}`} style={{ width: '12px', height: '12px' }}></div>
           </div>
 
-          <div className="driver-card-minimal stagger-in">
-             <div className="driver-avatar-mini skeleton-circle">
-               {activeRide.status === 'requested' ? '⏳' : '👤'}
-             </div>
-             <div className="driver-info-mini">
-               <div className="driver-name-mini">{activeRide.status === 'requested' ? 'Asignando...' : 'Juan'}</div>
-               {activeRide.status !== 'requested' && <div className="vehicle-info-mini">Toyota Corolla • ZIP123</div>}
-             </div>
-             <div className="driver-action-mini">
-                <button className="icon-btn-mini interactive-scale" onClick={() => triggerHaptic('light')}>📞</button>
-             </div>
+          <div className={`driver-arrival-card stagger-in ${activeRide.status === 'arrived' ? 'attention-pulse-bg' : ''}`} style={{ transition: 'background-color 0.4s ease' }}>
+             {activeRide.status === 'requested' ? (
+               <div style={{ transform: 'scale(0.8)', margin: '-20px 0' }}>
+                 <RadarSearch />
+               </div>
+             ) : (
+               <div className="driver-main-info fade-in" style={{ gap: '20px' }}>
+                  <div className="driver-photo-premium" style={{ width: '72px', height: '72px', fontSize: '36px' }}>
+                     👤
+                  </div>
+                  <div className="driver-detail-premium">
+                     <div className="driver-name-text" style={{ fontSize: '22px' }}>
+                        Juan G.
+                     </div>
+                     <div className="driver-rating-mini" style={{ fontSize: '14px', marginTop: '4px' }}>
+                        <span>⭐ 4.9</span>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>• 1,240 viajes</span>
+                     </div>
+                  </div>
+                  <div className="driver-action-mini">
+                     <button className="icon-btn-mini interactive-scale" style={{ width: '48px', height: '48px', fontSize: '20px', background: '#F3F4F6', color: '#111827' }} onClick={() => { triggerHaptic('light'); window.open(`tel:1234567890`); }}>📞</button>
+                  </div>
+               </div>
+             )}
+
+             {activeRide.status !== 'requested' && (
+               <div className="vehicle-badge-premium fade-in" style={{ marginTop: '24px', background: 'linear-gradient(135deg, #111827 0%, #1F2937 100%)', padding: '16px 20px' }}>
+                  <div className="v-brand-plate">
+                     <span className="v-plate-text" style={{ fontSize: '16px' }}>ZIP 123</span>
+                     <span className="v-model-text" style={{ fontSize: '12px', color: '#9CA3AF' }}>Toyota Corolla • Blanco</span>
+                  </div>
+                  <div className="v-icon-m" style={{ fontSize: '32px' }}>🚗</div>
+               </div>
+             )}
           </div>
           
-          <div className="tracking-meta-mini">
-             <div className="meta-row"><span>Precio</span> <strong>${activeRide.totalFare}</strong></div>
-             <div className="meta-row"><span>Pago</span> <strong>Efectivo</strong></div>
+          <div className="tracking-meta-mini" style={{ background: 'var(--surface-alt)', padding: '20px', borderRadius: '24px', marginBottom: '24px', border: '1px solid var(--border-light)' }}>
+             <div className="meta-row">
+                <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Precio estimado</span> 
+                <strong style={{ fontSize: '18px' }}>${activeRide.totalFare}</strong>
+             </div>
+             <div className="meta-row" style={{ marginBottom: 0 }}>
+                <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Método de pago</span> 
+                <strong>💵 Efectivo</strong>
+             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+          <div style={{ display: 'flex', gap: '12px' }}>
             <button 
               className="interactive-scale" 
               onClick={() => {
@@ -293,11 +337,13 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                   window.open('tel:911');
                 }
               }}
-              style={{ flex: 1, background: '#FF4B2B22', color: '#FF416C', border: 'none', padding: '16px', borderRadius: '16px', fontWeight: 800, fontSize: '15px' }}
+              style={{ width: '60px', borderRadius: '16px', background: '#FEE2E2', color: '#EF4444', border: 'none', fontWeight: 900, fontSize: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              🆘 SOS
+              🆘
             </button>
-            <button className="minimal-cancel-btn interactive-scale" style={{ flex: 2, marginTop: 0 }} onClick={() => cancelRide(activeRide.id)}>Cancelar viaje</button>
+            <button className="minimal-cancel-btn interactive-scale" style={{ flex: 1, marginTop: 0, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0' }} onClick={() => cancelRide(activeRide.id)}>
+              {activeRide.status === 'requested' ? 'Cancelar búsqueda' : 'Cancelar viaje'}
+            </button>
           </div>
         </div>
       </div>
@@ -425,6 +471,18 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                 <span className="label-m" style={{ fontWeight: 800 }}>Envío</span>
              </button>
           </div>
+
+          {rideType === 'errand' && (
+            <div className="errand-details-minimal stagger-in" style={{ marginTop: '24px' }}>
+              <input 
+                className="minimal-input-full"
+                placeholder="¿Qué mandamos? (ej. Llaves, Comida, Paquete)"
+                value={errandDescription}
+                onChange={(e) => setErrandDescription(e.target.value)}
+                style={{ width: '100%', padding: '16px', borderRadius: '16px', background: '#F3F4F6', border: '1px solid #E5E7EB', fontWeight: 700 }}
+              />
+            </div>
+          )}
         </div>
       )}
 

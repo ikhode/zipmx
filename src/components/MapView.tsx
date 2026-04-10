@@ -5,11 +5,13 @@ import 'leaflet/dist/leaflet.css';
 interface MapViewProps {
   center?: [number, number];
   zoom?: number;
-  pickupLocation?: [number, number];
-  dropoffLocation?: [number, number];
+  pickupLocation?: [number, number] | null;
+  dropoffLocation?: [number, number] | null;
+  driverLocation?: [number, number] | null;
   stops?: [number, number][];
   selectingLocation?: boolean;
   onLocationSelected?: (loc: [number, number]) => void;
+  onMapInteraction?: () => void;
   nearbyDrivers?: { id: string, position: [number, number], type: string }[];
   /** Incrementar este valor fuerza un flyTo inmediato al `center` actual */
   flyToTrigger?: number;
@@ -20,9 +22,11 @@ export function MapView({
   zoom = 13,
   pickupLocation,
   dropoffLocation,
+  driverLocation,
   stops = [],
   selectingLocation = false,
   onLocationSelected,
+  onMapInteraction,
   nearbyDrivers = [],
   flyToTrigger = 0,
 }: MapViewProps) {
@@ -61,7 +65,10 @@ export function MapView({
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    map.on('movestart', () => setIsDragging(true));
+    map.on('movestart', () => {
+      setIsDragging(true);
+      if (onMapInteraction) onMapInteraction();
+    });
     
     map.on('moveend', () => {
       setIsDragging(false);
@@ -115,8 +122,8 @@ export function MapView({
         marker = L.marker(driver.position, {
           icon: L.icon({
             iconUrl: driver.type === 'moto' 
-              ? 'https://zipp.inteligent.software/icons/mototaxi_3d_icon_1775323676892.png' 
-              : 'https://zipp.inteligent.software/icons/taxi_3d_icon_1775323650355.png',
+              ? '/icons/mototaxi_3d_icon_1775323676892.png' 
+              : '/icons/taxi_3d_icon_1775323650355.png',
             iconSize: [40, 40],
             iconAnchor: [20, 20]
           }),
@@ -139,26 +146,22 @@ export function MapView({
   useEffect(() => {
     if (!mapRef.current || !center || selectingLocation) return;
     
-    const currCenter = mapRef.current.getCenter();
-    const distance = Math.sqrt(
-      Math.pow(currCenter.lat - center[0], 2) + 
-      Math.pow(currCenter.lng - center[1], 2)
-    );
+    const map = mapRef.current;
+    const currCenter = map.getCenter();
+    const distance = L.latLng(currCenter).distanceTo(L.latLng(center));
 
     // Only fly if the change is significant (likely a programmatic state change)
-    if (distance > 0.001 || Math.abs(mapRef.current.getZoom() - zoom) > 0.5) {
-      const size = mapRef.current.getSize();
+    if (distance > 50 || Math.abs(map.getZoom() - zoom) > 0.5) {
+      const size = map.getSize();
       const targetPoint = L.point(size.x / 2, size.y * 0.35);
-      const targetLatLng = mapRef.current.containerPointToLatLng(targetPoint);
+      const centerPoint = L.point(size.x / 2, size.y / 2);
+      const pixelOffset = targetPoint.subtract(centerPoint);
       
-      const latOffset = center[0] - targetLatLng.lat;
-      const lngOffset = center[1] - targetLatLng.lng;
+      const projectedTarget = map.project(center, zoom);
+      const projectedCenter = projectedTarget.subtract(pixelOffset);
+      const targetCenterLatLng = map.unproject(projectedCenter, zoom);
       
-      mapRef.current.flyTo(
-        [center[0] + latOffset, center[1] + lngOffset], 
-        zoom, 
-        { duration: 1.2, easeLinearity: 0.1 }
-      );
+      map.flyTo(targetCenterLatLng, zoom, { duration: 1.2, easeLinearity: 0.1 });
     }
   }, [center, zoom, selectingLocation]);
 
@@ -168,19 +171,23 @@ export function MapView({
 
     const c = centerRef.current;
     const z = zoomRef.current;
+    const map = mapRef.current;
 
-    const size = mapRef.current.getSize();
+    const size = map.getSize();
     const targetPoint = L.point(size.x / 2, size.y * 0.35);
-    const targetLatLng = mapRef.current.containerPointToLatLng(targetPoint);
 
-    const latOffset = c[0] - targetLatLng.lat;
-    const lngOffset = c[1] - targetLatLng.lng;
+    // Calculate the pixel offset from center to our target point
+    const centerPoint = L.point(size.x / 2, size.y / 2);
+    const pixelOffset = targetPoint.subtract(centerPoint);
 
-    mapRef.current.flyTo(
-      [c[0] + latOffset, c[1] + lngOffset],
-      z,
-      { duration: 1.0, easeLinearity: 0.1 }
-    );
+    // Project target LatLng to pixel coordinate at the target zoom
+    const projectedTarget = map.project(c, z);
+    // Subtract pixel offset to find the corresponding map center projected coordinate
+    const projectedCenter = projectedTarget.subtract(pixelOffset);
+    // Unproject to get the final map center LatLng
+    const targetCenterLatLng = map.unproject(projectedCenter, z);
+
+    map.flyTo(targetCenterLatLng, z, { duration: 1.0, easeLinearity: 0.1 });
   // Solo se dispara cuando flyToTrigger cambia - lee center/zoom por refs
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyToTrigger]);
@@ -238,6 +245,62 @@ export function MapView({
       }).addTo(mapRef.current);
     }
   }, [pickupLocation, dropoffLocation]);
+
+  const driverMarkerRef = useRef<L.Marker | null>(null);
+
+  // Driver Marker Layer
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    if (driverLocation) {
+      if (!driverMarkerRef.current) {
+        const taxiIcon = L.icon({
+          iconUrl: '/icons/taxi_3d_icon_1775323650355.png',
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+        });
+        driverMarkerRef.current = L.marker(driverLocation, { icon: taxiIcon }).addTo(mapRef.current);
+      } else {
+        driverMarkerRef.current.setLatLng(driverLocation);
+      }
+    } else if (driverMarkerRef.current) {
+      driverMarkerRef.current.remove();
+      driverMarkerRef.current = null;
+    }
+  }, [driverLocation]);
+
+  // Auto-Focus Intelligence
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    const targets: L.LatLngExpression[] = [];
+    
+    // Logic: 
+    // 1. If we have driver and pickup, focus those (On the way to pickup)
+    // 2. If we have driver and dropoff, focus those (Trip in progress)
+    // 3. Otherwise, if we have pickup and dropoff, focus those (Planning)
+    
+    if (driverLocation) {
+      targets.push(driverLocation);
+      if (pickupLocation) targets.push(pickupLocation);
+      else if (dropoffLocation) targets.push(dropoffLocation);
+    } else if (pickupLocation && dropoffLocation) {
+      targets.push(pickupLocation);
+      targets.push(dropoffLocation);
+      if (stops?.length) stops.forEach(s => targets.push(s));
+    }
+
+    if (targets.length >= 2) {
+       const bounds = L.latLngBounds(targets);
+       mapRef.current.fitBounds(bounds, { 
+         padding: [80, 80],
+         maxZoom: 16,
+         animate: true
+       });
+    } else if (targets.length === 1) {
+       mapRef.current.setView(targets[0], 16, { animate: true });
+    }
+  }, [driverLocation, pickupLocation, dropoffLocation]);
 
   // Route Lifecycle: Update routing and polylines
   useEffect(() => {

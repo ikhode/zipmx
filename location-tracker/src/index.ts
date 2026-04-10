@@ -1,13 +1,10 @@
 import { DurableObject } from '@cloudflare/workers-types';
 
-export class LocationTracker {
-  state: any;
+export class LocationTracker implements DurableObject {
   sessions: Set<WebSocket> = new Set();
   driverLocations: Map<string, any> = new Map();
 
-  constructor(state: any) {
-    this.state = state;
-  }
+  constructor(public state: any, public env: any) {}
 
   async fetch(request: Request) {
     const upgradeHeader = request.headers.get('Upgrade');
@@ -17,8 +14,7 @@ export class LocationTracker {
 
     // @ts-ignore
     const { 0: client, 1: server } = new WebSocketPair();
-
-    await this.handleSession(server);
+    this.handleSession(server);
 
     return new Response(null, {
       status: 101,
@@ -27,8 +23,9 @@ export class LocationTracker {
     });
   }
 
-  async handleSession(ws: WebSocket) {
-    (ws as any).accept();
+  handleSession(ws: WebSocket) {
+    // @ts-ignore
+    ws.accept();
     this.sessions.add(ws);
 
     // Send current locations to the new client
@@ -39,7 +36,7 @@ export class LocationTracker {
     
     ws.send(JSON.stringify({ type: 'initial_drivers', drivers: initialData }));
 
-    ws.addEventListener('message', async (msg) => {
+    ws.addEventListener('message', (msg) => {
       try {
         const data = JSON.parse(msg.data as string);
         
@@ -79,3 +76,9 @@ export class LocationTracker {
     });
   }
 }
+
+export default {
+  async fetch(request: Request, env: any) {
+    return new Response('Location Tracker Worker is running', { status: 200 });
+  }
+};
