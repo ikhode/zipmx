@@ -1399,9 +1399,29 @@ button:active {
 }
 
 /* --- DRIVER EXPERIENCE --- */
+.experience-driver {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.driver-mode-sheet {
+  background: white;
+  border-radius: 24px 24px 0 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.scroll-card {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 40px;
+}
+
 .driver-focused-view {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
   padding: 20px;
@@ -2996,29 +3016,18 @@ button:active {
 }
 
 /* --- DRIVER EXPERIENCE OPTIMIZATIONS --- */
-.driver-focused-view {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  pointer-events: auto;
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-  animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-  padding: 0 16px 24px;
-  max-height: 85vh;
+.experience-driver .scroll-card {
+  padding: 12px 0 32px;
+  background: var(--surface);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  box-shadow: 0 -15px 50px rgba(0, 0, 0, 0.1);
+  border-top: 1px solid var(--border-light);
 }
 
 .driver-mode-sheet {
-  background: var(--surface);
-  border-radius: var(--radius-xl);
-  padding: 32px 24px;
-  box-shadow: 0 -15px 50px rgba(0, 0, 0, 0.1);
-  border: 1px solid var(--border-light);
-  overflow-y: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  background: transparent;
+  padding: 0 24px;
+  overflow-y: visible;
 }
 
 .driver-mode-sheet::-webkit-scrollbar {

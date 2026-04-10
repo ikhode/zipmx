@@ -611,16 +611,19 @@ export default function App() {
               </>
             )
           ) : (
-             <div className="driver-focused-view">
-               <DriverModeSheet 
-                 session={session} 
-                 onActiveRideChange={setHasActiveRide} 
-                 onLoginRequired={() => onLoginRequired('driver')}
-                 onOnlineChange={setDriverIsOnline}
-                 onUserUpdate={(user) => setSession({ user })}
-                 activeRideOverride={activeRide || undefined}
-               />
-             </div>
+             <>
+               <div className="scroll-spacer" style={{ height: hasActiveRide ? '65vh' : '40vh', transition: 'height 0.6s cubic-bezier(0.4, 0, 0.2, 1)' }}></div>
+               <div className="scroll-card">
+                 <DriverModeSheet 
+                   session={session} 
+                   onActiveRideChange={setHasActiveRide} 
+                   onLoginRequired={() => onLoginRequired('driver')}
+                   onOnlineChange={setDriverIsOnline}
+                   onUserUpdate={(user) => setSession({ user })}
+                   activeRideOverride={activeRide || undefined}
+                 />
+               </div>
+             </>
           )}
         </div>
       )}

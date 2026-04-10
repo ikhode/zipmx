@@ -343,9 +343,10 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
 
   return (
     <div className="driver-mode-sheet premium-card-anim">
+      <div className="sheet-handle-minimal"></div>
       {showAcceptanceSplash && <AcceptanceSplash onFinish={() => setShowAcceptanceSplash(false)} />}
       
-      <div className="driver-status-bar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px' }}>
+      <div className="driver-status-bar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px', marginTop: '12px' }}>
           <button 
               className={`status-toggle-pill interactive-scale ${isOnline ? 'online' : 'offline'}`} 
               onClick={toggleOnline}
