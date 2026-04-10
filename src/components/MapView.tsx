@@ -5,8 +5,9 @@ import 'leaflet/dist/leaflet.css';
 interface MapViewProps {
   center?: [number, number];
   zoom?: number;
-  pickupLocation?: [number, number];
-  dropoffLocation?: [number, number];
+  pickupLocation?: [number, number] | null;
+  dropoffLocation?: [number, number] | null;
+  driverLocation?: [number, number] | null;
   stops?: [number, number][];
   selectingLocation?: boolean;
   onLocationSelected?: (loc: [number, number]) => void;
@@ -21,6 +22,7 @@ export function MapView({
   zoom = 13,
   pickupLocation,
   dropoffLocation,
+  driverLocation,
   stops = [],
   selectingLocation = false,
   onLocationSelected,
@@ -243,6 +245,62 @@ export function MapView({
       }).addTo(mapRef.current);
     }
   }, [pickupLocation, dropoffLocation]);
+
+  const driverMarkerRef = useRef<L.Marker | null>(null);
+
+  // Driver Marker Layer
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    if (driverLocation) {
+      if (!driverMarkerRef.current) {
+        const taxiIcon = L.icon({
+          iconUrl: '/icons/taxi_3d_icon_1775323650355.png',
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+        });
+        driverMarkerRef.current = L.marker(driverLocation, { icon: taxiIcon }).addTo(mapRef.current);
+      } else {
+        driverMarkerRef.current.setLatLng(driverLocation);
+      }
+    } else if (driverMarkerRef.current) {
+      driverMarkerRef.current.remove();
+      driverMarkerRef.current = null;
+    }
+  }, [driverLocation]);
+
+  // Auto-Focus Intelligence
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    const targets: L.LatLngExpression[] = [];
+    
+    // Logic: 
+    // 1. If we have driver and pickup, focus those (On the way to pickup)
+    // 2. If we have driver and dropoff, focus those (Trip in progress)
+    // 3. Otherwise, if we have pickup and dropoff, focus those (Planning)
+    
+    if (driverLocation) {
+      targets.push(driverLocation);
+      if (pickupLocation) targets.push(pickupLocation);
+      else if (dropoffLocation) targets.push(dropoffLocation);
+    } else if (pickupLocation && dropoffLocation) {
+      targets.push(pickupLocation);
+      targets.push(dropoffLocation);
+      if (stops?.length) stops.forEach(s => targets.push(s));
+    }
+
+    if (targets.length >= 2) {
+       const bounds = L.latLngBounds(targets);
+       mapRef.current.fitBounds(bounds, { 
+         padding: [80, 80],
+         maxZoom: 16,
+         animate: true
+       });
+    } else if (targets.length === 1) {
+       mapRef.current.setView(targets[0], 16, { animate: true });
+    }
+  }, [driverLocation, pickupLocation, dropoffLocation]);
 
   // Route Lifecycle: Update routing and polylines
   useEffect(() => {

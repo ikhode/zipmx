@@ -2823,4 +2823,175 @@ button:active {
 @keyframes pulseLoop {
   0% { transform: scale(1); opacity: 0.8; }
   100% { transform: scale(2.5); opacity: 0; }
-}
+}
+
+/* --- PHASE 2 PREMIUM EXTENSIONS --- */
+
+.radar-container-mini {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin: 40px auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar-circle {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--accent-alt);
+  border-radius: 50%;
+  opacity: 0;
+  animation: radarPulse 3s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.radar-circle:nth-child(2) { animation-delay: 1s; }
+.radar-circle:nth-child(3) { animation-delay: 2s; }
+
+.radar-center-icon {
+  width: 50px;
+  height: 50px;
+  background: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  box-shadow: 0 8px 32px rgba(0, 209, 255, 0.2);
+  z-index: 2;
+  border: 2px solid var(--accent-alt);
+}
+
+@keyframes radarPulse {
+  0% { transform: scale(0.5); opacity: 0.8; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+.acceptance-splash-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 11, 0.95);
+  backdrop-filter: blur(12px);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  animation: splashFadeIn 0.4s ease;
+}
+
+.acceptance-checkmark-anim {
+  width: 100px;
+  height: 100px;
+  background: #10B981;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56px;
+  box-shadow: 0 0 40px rgba(16, 185, 129, 0.4);
+  margin-bottom: 24px;
+  animation: checkPop 0.6s var(--transition-spring);
+}
+
+@keyframes splashFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes checkPop {
+  0% { transform: scale(0.5); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.glass-v2-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.08);
+}
+
+.premium-status-pill {
+  background: var(--text);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+/* --- PREMIUM TRIP STATES & TRANSITIONS --- */
+
+.state-transition-enter {
+  animation: fadeInState 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes fadeInState {
+  from { opacity: 0; transform: scale(0.98) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.glass-v2-card {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-xl);
+}
+
+.action-btn-premium {
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.action-btn-premium::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 100%);
+  z-index: -1;
+  border-radius: inherit;
+}
+
+.action-btn-premium.arrive { 
+  background: linear-gradient(135deg, #2D3748 0%, #0A0A0B 100%);
+  border: 1px solid #4A5568;
+}
+
+.action-btn-premium.start { 
+  background: linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%);
+  border: 1px solid #60A5FA;
+  box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.4);
+}
+
+.action-btn-premium.complete { 
+  background: linear-gradient(135deg, #10B981 0%, #047857 100%);
+  border: 1px solid #34D399;
+  box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4);
+}
+
+.action-btn-premium:active {
+  transform: scale(0.94);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.2) !important;
+}
+
+.attention-pulse-bg {
+  animation: bgAttentionPulse 2s infinite alternate;
+}
+
+@keyframes bgAttentionPulse {
+  0% { background-color: var(--surface-alt); }
+  100% { background-color: #ECFDF5; }
+}
+

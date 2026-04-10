@@ -5,12 +5,14 @@ import { eq, and, desc, inArray } from 'drizzle-orm';
 import { jwt, sign } from 'hono/jwt';
 import * as schema from '../../src/db/schema';
 
+import { Context, Next } from 'hono';
+
 type Bindings = {
-  DB: any;
+  DB: D1Database;
   JWT_SECRET: string;
   MERCADOPAGO_ACCESS_TOKEN: string;
-  LOCATION_TRACKER: any;
-  STORAGE: any; // R2 Bucket
+  LOCATION_TRACKER: DurableObjectNamespace;
+  STORAGE: R2Bucket;
 };
 
 type JWTPayload = {
@@ -21,7 +23,7 @@ type JWTPayload = {
 
 const app = new Hono<{ Bindings: Bindings }>().basePath('/api');
 
-const getSecret = (c: any): string => {
+const getSecret = (c: Context<{ Bindings: Bindings }>): string => {
   const secret = c.env?.JWT_SECRET;
   if (secret) return secret;
   // Fallback for local dev — wrangler pages dev does not inject Pages secrets
@@ -29,7 +31,7 @@ const getSecret = (c: any): string => {
   return 'dev-secret-keep-it-safe-never-use-in-prod';
 };
 
-const authGuard = (c: any, next: any) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
+const authGuard = (c: Context<{ Bindings: Bindings }>, next: Next) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
 
 app.get('/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }));
 
@@ -46,6 +48,13 @@ app.all('/ws', async (c) => {
 
   return obj.fetch(c.req.raw);
 });
+
+interface GeocodingResult {
+  lat: string;
+  lon: string;
+  display_name: string;
+  address: Record<string, string>;
+}
 
 // Geocoding Proxy
 app.get('/geocoding/address', async (c) => {
@@ -66,12 +75,11 @@ app.get('/geocoding/address', async (c) => {
   try {
     const response = await fetch(url, {
       headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
-
     });
     
     if (response.status === 429) return c.json({ error: 'Rate limit exceeded' }, 429);
     
-    const data = await response.json() as any[];
+    const data = await response.json() as GeocodingResult[];
     if (data.length === 0) return c.json(null);
 
     return c.json({
@@ -80,8 +88,9 @@ app.get('/geocoding/address', async (c) => {
       display_name: data[0].display_name,
       address: data[0].address || {},
     });
-  } catch (error: any) {
-    return c.json({ error: error.message }, 500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -132,20 +141,20 @@ app.get('/geocoding/reverse', async (c) => {
   try {
     const response = await fetch(url, {
       headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
-
     });
 
     if (response.status === 429) return c.json({ error: 'Rate limit exceeded' }, 429);
 
-    const data = await response.json() as any;
+    const data = await response.json() as GeocodingResult;
     return c.json({
       lat: parseFloat(data.lat),
       lon: parseFloat(data.lon),
       display_name: data.display_name,
       address: data.address || {},
     });
-  } catch (error: any) {
-    return c.json({ error: error.message }, 500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -154,7 +163,7 @@ app.post('/upload', authGuard, async (c) => {
   try {
     const payload = c.get('jwtPayload') as JWTPayload;
     const body = await c.req.parseBody();
-    const file = body['file'] as any; // File object
+    const file = body['file'] as unknown as File; // File object
 
     if (!file || !file.name) return c.json({ error: 'Archivo no válido' }, 400);
 
@@ -167,8 +176,9 @@ app.post('/upload', authGuard, async (c) => {
 
     const url = `/api/files/${key}`;
     return c.json({ url, key });
-  } catch (err: any) {
-    return c.json({ error: `Error al subir: ${err.message}` }, 500);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return c.json({ error: `Error al subir: ${message}` }, 500);
   }
 });
 
@@ -191,6 +201,15 @@ app.get('/files/:path{.+}', async (c) => {
   }
 });
 
+interface OSRMResponse {
+  code: string;
+  routes: Array<{
+    geometry: any;
+    duration: number;
+    distance: number;
+  }>;
+}
+
 // Routing Proxy (OSRM) to avoid CORS
 app.get('/routing/route', async (c) => {
   const coords = c.req.query('coords'); // format: "lon1,lat1;lon2,lat2"
@@ -211,7 +230,7 @@ app.get('/routing/route', async (c) => {
       fetch(url, { headers: { 'User-Agent': 'ZippMobilityApp/1.0' }, signal: controller.signal })
         .then(async res => {
           if (!res.ok) throw new Error(`Status ${res.status}`);
-          const data = await res.json();
+          const data = await res.json() as OSRMResponse;
           if (data.code !== 'Ok') throw new Error(`OSRM Error: ${data.code}`);
           return data;
         })
@@ -219,8 +238,8 @@ app.get('/routing/route', async (c) => {
 
     const fastestSuccess = await Promise.any(fetchPromises);
     return c.json(fastestSuccess);
-  } catch (error: any) {
-    if (error.name === 'AbortError' || error.name === 'AggregateError') {
+  } catch (error: unknown) {
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'AggregateError')) {
        return c.json({ error: 'Routing servers are currently unavailable or timed out.' }, 504);
     }
     return c.json({ error: 'All routing instances failed.' }, 503);
@@ -230,7 +249,6 @@ app.get('/routing/route', async (c) => {
 });
 
 
-// Auth
 app.post('/auth/signup', async (c) => {
   try {
     const { email, phone, fullName, userType } = await c.req.json();
@@ -254,9 +272,10 @@ app.post('/auth/signup', async (c) => {
     const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
     const token = await sign(payload, secret, 'HS256');
     return c.json({ user, token });
-  } catch (error: any) {
-    const errorMsg = error?.message || 'Error desconocido';
-    const causeMsg = error?.cause?.message || '';
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+    const cause = (error as any)?.cause;
+    const causeMsg = cause?.message || '';
     
     console.error('[/auth/signup] Critical Registration Error:', {
       message: errorMsg,
@@ -351,13 +370,23 @@ app.post('/auth/verify-otp', async (c) => {
     const db = drizzle(c.env.DB, { schema });
 
     // Decoding Base64URL to JSON (Hand-rolled for Cloudflare Worker environment)
-    const base64Url = idToken.split('.')[1];
+    const base64Url = (idToken as string).split('.')[1];
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
     const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
         return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
     }).join(''));
     
-    const payload = JSON.parse(jsonPayload);
+    interface FirebasePayload {
+      iss: string;
+      aud: string;
+      sub: string;
+      exp: number;
+      name?: string;
+      phone_number?: string;
+      email?: string;
+      provider_id?: string;
+    }
+    const payload = JSON.parse(jsonPayload) as FirebasePayload;
 
     if (payload.iss !== `https://securetoken.google.com/zipp-mx` || payload.aud !== `zipp-mx`) {
       return c.json({ error: 'Token de Firebase inválido' }, 401);
@@ -368,7 +397,6 @@ app.post('/auth/verify-otp', async (c) => {
     }
 
     const firebaseUid = payload.sub;
-    const isAnonymous = payload.provider_id === 'anonymous' || (!payload.phone_number && !payload.email);
     
     // Determine the phone and email to store
     const firebasePhone = payload.phone_number || null;
@@ -411,7 +439,7 @@ app.post('/auth/verify-otp', async (c) => {
           })
           .where(eq(schema.users.id, user.id));
         
-        user = await db.query.users.findFirst({ where: eq(schema.users.id, user.id) });
+        user = (await db.query.users.findFirst({ where: eq(schema.users.id, user.id) }))!;
       }
     }
 
@@ -425,9 +453,10 @@ app.post('/auth/verify-otp', async (c) => {
       token, 
       isNewUser: user!.phone.startsWith('anon_') 
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('Backend Firebase Integration Error:', err);
-    return c.json({ error: 'Error de sincronización de identidad', details: err.message }, 500);
+    return c.json({ error: 'Error de sincronización de identidad', details: message }, 500);
   }
 });
 
@@ -460,7 +489,7 @@ app.patch('/profile', authGuard, async (c) => {
   const { fullName, email } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
   
-  const updateData: any = { updatedAt: new Date().toISOString() };
+  const updateData: Partial<typeof schema.users.$inferInsert> = { updatedAt: new Date().toISOString() };
   if (fullName) updateData.fullName = fullName;
   if (email) updateData.email = email;
 
@@ -468,11 +497,12 @@ app.patch('/profile', authGuard, async (c) => {
     await db.update(schema.users).set(updateData).where(eq(schema.users.id, payload.id));
     const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
     return c.json(user);
-  } catch (error: any) {
-    if (error.message.includes('UNIQUE')) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (message.includes('UNIQUE')) {
       return c.json({ error: 'El correo electrónico ya está en uso.' }, 409);
     }
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -665,7 +695,7 @@ app.post('/rides/:id/status', authGuard, async (c) => {
   const rideId = c.req.param('id');
   const { status } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  const update: any = { status };
+  const update: Partial<typeof schema.rides.$inferInsert> = { status };
   
   if (status === 'in_progress') update.startedAt = new Date().toISOString();
   
@@ -722,8 +752,8 @@ app.post('/driver/location', authGuard, async (c) => {
 });
 
 app.get('/drivers/nearby', async (c) => {
-  const lat = parseFloat(c.req.query('lat') || '0');
-  const lng = parseFloat(c.req.query('lng') || '0');
+  const latStr = c.req.query('lat');
+  const lngStr = c.req.query('lng');
   const db = drizzle(c.env.DB, { schema });
   
   try {
@@ -754,8 +784,9 @@ app.get('/drivers/nearby', async (c) => {
     }));
 
     return c.json({ drivers });
-  } catch (error: any) {
-    console.error('[NearbyDrivers] Critical Error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[NearbyDrivers] Critical Error:', message);
     return c.json({ drivers: [] });
   }
 });
@@ -790,7 +821,15 @@ app.post('/payments/create', authGuard, async (c) => {
   const mercadoPagoAccessToken = c.env.MERCADOPAGO_ACCESS_TOKEN || 'TEST-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX';
   
   try {
-    const preferenceData: any = {
+    interface MercadoPagoPreference {
+      items: Array<{ title: string; quantity: number; unit_price: number }>;
+      back_urls: { success: string; failure: string; pending: string };
+      auto_return: string;
+      notification_url: string;
+      metadata: Record<string, any>;
+    }
+
+    const preferenceData: MercadoPagoPreference = {
       items: [{ title: description || 'Zipp Payment', quantity: 1, unit_price: amount }],
       back_urls: {
         success: `${c.req.header('origin')}/payment/success`,
@@ -808,21 +847,26 @@ app.post('/payments/create', authGuard, async (c) => {
       body: JSON.stringify(preferenceData),
     });
 
-    const preference = await mpRes.json() as any;
+    interface MPResponse {
+      id: string;
+      init_point: string;
+    }
+    const preference = await mpRes.json() as MPResponse;
     
     // Save to DB
     await db.insert(schema.commissionPayments).values({
       driverId: payload.id,
       amount,
-      paymentMethod: paymentMethod as any,
+      paymentMethod: paymentMethod as any, // Enum conversion might need narrowing if strict
       mercadopagoPreferenceId: preference.id,
       paymentUrl: preference.init_point,
       status: 'pending',
     });
 
     return c.json({ preference_id: preference.id, init_point: preference.init_point });
-  } catch (error: any) {
-    return c.json({ error: error.message }, 500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: message }, 500);
   }
 });
 

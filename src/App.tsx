@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import APIClient, { APIUser } from './lib/api';
+import APIClient, { APIUser, APIRide } from './lib/api';
 import { MapView } from './components/MapView';
 import { RideRequestSheet } from './components/RideRequestSheet';
 
@@ -121,14 +121,45 @@ export default function App() {
   const [flyToTrigger, setFlyToTrigger] = useState(0);
   const [driverIsOnline, setDriverIsOnline] = useState(false);
   const [showLegal, setShowLegal] = useState<string | null>(null);
+  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const lastSelectionMode = React.useRef<SelectionType>('none');
-  
+   
+   // Polling for active ride
+   useEffect(() => {
+     if (!session) return;
+     const poll = async () => {
+       try {
+         const ride = mode === 'driver' 
+           ? await APIClient.getActiveRide()
+           : await APIClient.getMyActiveRide();
+         setActiveRide(ride);
+         setHasActiveRide(!!ride);
+       } catch (err) {
+         console.error('[App] Active ride polling error:', err);
+       }
+     };
+     poll();
+     const interval = setInterval(poll, 5000);
+     return () => clearInterval(interval);
+   }, [session, mode]);
+
   // Real-time Tracker
   const { nearbyDrivers: realTimeDrivers, updateLocation } = useLocationTracker(
     mode, 
     session?.user?.id, 
     mode === 'driver' && driverIsOnline
   );
+
+   // Compute focused driver position for passengers
+   const activeRideDriverLocation = useMemo(() => {
+     if (mode === 'passenger' && activeRide?.driverId) {
+       const driver = realTimeDrivers.find(d => d.id === activeRide.driverId);
+       if (driver?.currentLatitude && driver?.currentLongitude) {
+         return [driver.currentLatitude, driver.currentLongitude] as [number, number];
+       }
+     }
+     return null;
+   }, [mode, activeRide, realTimeDrivers]);
 
   const onLoginRequired = (type: 'passenger' | 'driver', reason?: string) => {
     setQuickAuthType(type);
@@ -227,7 +258,8 @@ export default function App() {
 
   // --- Firebase Auth & Session Sync ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: any) => {
+    // Import type User from firebase/auth
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
           // Sync with backend using the ID token
@@ -471,8 +503,9 @@ export default function App() {
         <MapView 
           center={mapCenter}
           zoom={15}
-          pickupLocation={pickupLocation || undefined}
-          dropoffLocation={dropoffLocation || undefined}
+          pickupLocation={pickupLocation || (activeRide ? [activeRide.pickupLatitude, activeRide.pickupLongitude] : undefined)}
+          dropoffLocation={dropoffLocation || (activeRide ? [activeRide.dropoffLatitude, activeRide.dropoffLongitude] : undefined)}
+          driverLocation={mode === 'driver' ? (userLocation || undefined) : (activeRideDriverLocation || undefined)}
           stops={stops.map(s => s.position)}
           selectingLocation={selectionMode !== 'none'}
           onLocationSelected={(loc) => setTempLocation(loc)}
@@ -550,7 +583,6 @@ export default function App() {
                        <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}>INICIAR SESIÓN</button>
                     </div>
                   )}
-                  
                   <RideRequestSheet
                     session={session}
                     initialPlanning={planningStarted}
@@ -573,6 +605,7 @@ export default function App() {
                     userLocation={userLocation}
                     geoLoading={geoLoading}
                     onUseMyLocation={handleUseMyLocation}
+                    activeRideOverride={activeRide || undefined}
                   />
                 </div>
               </>
@@ -585,6 +618,7 @@ export default function App() {
                  onLoginRequired={() => onLoginRequired('driver')}
                  onOnlineChange={setDriverIsOnline}
                  onUserUpdate={(user) => setSession({ user })}
+                 activeRideOverride={activeRide || undefined}
                />
              </div>
           )}

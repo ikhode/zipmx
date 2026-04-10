@@ -16,7 +16,20 @@ vi.mock('../lib/api', () => ({
 }));
 
 describe('DriverModeSheet Component', () => {
-  const mockSession = { user: { id: 'driver-1' } };
+  const mockSession = { 
+    user: { 
+      id: 'driver-1',
+      email: 'driver@test.com',
+      phone: '1234567890',
+      fullName: 'Test Driver',
+      userType: 'driver' as const,
+      profileImageUrl: null,
+      passwordHash: null,
+      verified: true,
+      createdAt: null,
+      updatedAt: null
+    } 
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();

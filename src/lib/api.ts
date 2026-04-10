@@ -1,32 +1,16 @@
-export interface APIUser {
-  id: string;
-  email: string;
-  fullName: string;
-  userType: 'passenger' | 'driver';
-  phone: string;
-  verified: boolean;
-  profileImageUrl?: string | null;
+import { type User, type Ride } from '../db/schema';
+
+export type APIUser = User;
+export type APIRide = Ride;
+
+interface AuthResponse {
+  user: APIUser;
+  token: string;
 }
 
-export interface APIRide {
-  id: string;
-  status: 'requested' | 'accepted' | 'arrived' | 'in_progress' | 'completed' | 'cancelled';
-  pickupLatitude: number;
-  pickupLongitude: number;
-  pickupAddress: string;
-  dropoffLatitude: number;
-  dropoffLongitude: number;
-  dropoffAddress: string;
-  totalFare: number;
-  baseFare: number;
-  rideType: 'ride' | 'errand';
-  distanceKm: number;
-  estimatedDurationMinutes: number;
-  errandDescription?: string;
-  errandItems?: string;
-  passengerId: string;
-  driverId?: string | null;
-  createdAt: string;
+interface OTPResponse extends AuthResponse {
+  success: boolean;
+  isNewUser: boolean;
 }
 
 class APIClient {
@@ -46,7 +30,7 @@ class APIClient {
     }
   }
 
-  private static async request(path: string, options: RequestInit = {}) {
+  private static async request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
     const url = `/api${path}`;
     const requestOptions = {
       ...options,
@@ -78,18 +62,19 @@ class APIClient {
         throw new Error(errorMessage);
       }
 
-      return bodyData;
-    } catch (err: any) {
-      console.error(`API Error [${path}]:`, err);
-      if (err.message.includes('Failed to fetch')) {
+      return bodyData as T;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error(`API Error [${path}]:`, message);
+      if (message.includes('Failed to fetch')) {
         throw new Error('No se pudo contactar con el servidor. Revisa tu conexión.');
       }
       throw err;
     }
   }
 
-  static async signup(data: any) {
-    const res = await this.request('/auth/signup', {
+  static async signup(data: Partial<APIUser> & { password?: string }) {
+    const res = await this.request<AuthResponse>('/auth/signup', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -108,9 +93,9 @@ class APIClient {
         password: phone,
         userType,
       });
-    } catch (error: any) {
-      const msg = (error.message || '').toLowerCase();
-      if (msg.includes('ya está registrado') || msg.includes('registrado') || msg.includes('unique')) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      if (message.includes('ya está registrado') || message.includes('registrado') || message.includes('unique')) {
         // Fallback: If they already exist, just log them in seamlessly.
         return await this.login(email, phone);
       }
@@ -119,7 +104,7 @@ class APIClient {
   }
 
   static async login(email: string, password?: string) {
-    const res = await this.request('/auth/login', {
+    const res = await this.request<AuthResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
@@ -128,10 +113,10 @@ class APIClient {
     return res.user;
   }
 
-  static async getProfile() {
+  static async getProfile(): Promise<APIUser | null> {
     if (!this.token) return null;
     try {
-      return await this.request('/profile');
+      return await this.request<APIUser>('/profile');
     } catch {
       this.logout();
       return null;
@@ -139,19 +124,19 @@ class APIClient {
   }
 
   static async updateProfile(data: Partial<APIUser>) {
-    return await this.request('/profile', {
+    return await this.request<APIUser>('/profile', {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   // Passenger methods
-  static async getMyRides() {
-    return await this.request('/rides/my');
+  static async getMyRides(): Promise<APIRide[]> {
+    return await this.request<APIRide[]>('/rides/my');
   }
 
-  static async getMyActiveRide() {
-    return await this.request('/rides/my-active');
+  static async getMyActiveRide(): Promise<APIRide | null> {
+    return await this.request<APIRide | null>('/rides/my-active');
   }
 
   static async requestRide(data: {
@@ -266,7 +251,7 @@ class APIClient {
   }
 
   static async verifyOTP(phone: string, idToken: string) {
-    const res = await this.request('/auth/verify-otp', {
+    const res = await this.request<OTPResponse>('/auth/verify-otp', {
       method: 'POST',
       body: JSON.stringify({ phone, idToken })
     });
