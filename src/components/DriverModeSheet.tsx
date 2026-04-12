@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import APIClient, { APIUser, APIRide } from '../lib/api';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
+import { playAlertSound, playSuccessSound } from '../lib/audio';
 import { PostRideSummary } from './PostRideSummary';
 
 interface DriverModeSheetProps {
@@ -161,6 +162,15 @@ const SearchingRadar = () => (
 export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange, onUserUpdate, activeRideOverride }: DriverModeSheetProps) {
   const { showToast } = useToast();
   const [rides, setRides] = useState<APIRide[]>([]);
+  const prevRidesRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (rides.length > prevRidesRef.current) {
+       playAlertSound();
+    }
+    prevRidesRef.current = rides.length;
+  }, [rides]);
+
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const [showAcceptanceSplash, setShowAcceptanceSplash] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
@@ -288,6 +298,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     setLoading(true);
     try {
       await APIClient.acceptRide(id);
+      playSuccessSound();
       setShowAcceptanceSplash(true);
       const active = await APIClient.getActiveRide();
       if (active) {

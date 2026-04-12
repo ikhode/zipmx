@@ -3,6 +3,7 @@ import APIClient, { APIUser, APIRide } from '../lib/api';
 import { searchAddresses, formatAddress, GeocodingResult } from '../lib/geocoding';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
+import { playNotificationSound, playSuccessSound } from '../lib/audio';
 import { PostRideSummary } from './PostRideSummary';
 
 // --- Constants ---
@@ -81,8 +82,19 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   const [searchText, setSearchText] = useState('');
   const [step, setStep] = useState<'service' | 'selection' | 'tracking'>('service');
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  const prevRideStatusRef = useRef<string | null>(null);
   
   useEffect(() => {
+    if (activeRide) {
+      if (prevRideStatusRef.current !== activeRide.status) {
+         if (activeRide.status === 'accepted') playSuccessSound();
+         if (activeRide.status === 'arrived') playNotificationSound();
+         if (activeRide.status === 'completed') playSuccessSound();
+      }
+      prevRideStatusRef.current = activeRide.status;
+    } else {
+      prevRideStatusRef.current = null;
+    }
     onActiveRideChange?.(!!activeRide);
   }, [activeRide, onActiveRideChange]);
   
