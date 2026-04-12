@@ -163,6 +163,8 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   const [rides, setRides] = useState<APIRide[]>([]);
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const [showAcceptanceSplash, setShowAcceptanceSplash] = useState(false);
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [driverStats, setDriverStats] = useState<{todayEarnings?: number, todayTrips?: number} | null>(null);
 
   useEffect(() => {
     if (activeRideOverride) {
@@ -205,7 +207,12 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       if (session.user.userType === 'driver') {
         setNeedsSetup(false);
         const driver = await APIClient.getDriverSetup();
-        if (driver) setIsOnline(driver.isActive);
+        if (driver) {
+          setIsOnline(driver.isActive);
+          if (!driver.isActive) {
+             APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
+          }
+        }
         return;
       }
 
@@ -215,6 +222,9 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
         else {
           setNeedsSetup(false);
           setIsOnline(driver.isActive);
+          if (!driver.isActive) {
+             APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
+          }
         }
       } catch {
         setNeedsSetup(true);
@@ -292,14 +302,36 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     }
   }, [fetchData, showToast]);
 
-  const toggleOnline = () => {
+  const toggleOnline = async () => {
     if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
       onLoginRequired('Identifícate para empezar a conducir');
       return;
     }
+
+    if (activeRide) {
+      showToast('No puedes desconectarte durante un viaje activo', 'error');
+      triggerHaptic('error');
+      return;
+    }
+
     triggerHaptic('medium');
-    setIsOnline(!isOnline);
-    showToast(isOnline ? 'Te has desconectado' : 'Estás en línea', isOnline ? 'info' : 'success');
+    const newState = !isOnline;
+    
+    setIsOnline(newState);
+    if (!newState) {
+      setRides([]); // Clear rides if offline
+      APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
+    }
+
+    try {
+      await APIClient.updateDriverStatus(newState);
+      showToast(newState ? 'Estás en línea' : 'Te has desconectado', newState ? 'success' : 'info');
+    } catch (e: unknown) {
+      setIsOnline(!newState); // revertir
+      const message = e instanceof Error ? e.message : 'Error al cambiar estado';
+      showToast(message, 'error');
+      triggerHaptic('error');
+    }
   };
 
   const vehicleOptions = useMemo(() => [
@@ -346,22 +378,36 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       <div className="sheet-handle-minimal"></div>
       {showAcceptanceSplash && <AcceptanceSplash onFinish={() => setShowAcceptanceSplash(false)} />}
       
-      <div className="driver-status-bar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px', marginTop: '12px' }}>
-          <button 
-              className={`status-toggle-pill interactive-scale ${isOnline ? 'online' : 'offline'}`} 
-              onClick={toggleOnline}
-              style={{ padding: '14px 28px', borderRadius: '100px', fontWeight: 900, fontSize: '13px', letterSpacing: '0.08em' }}
-          >
-            {isOnline ? (
-              <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div className="pulse-indicator"></div>
-                EN LÍNEA
-              </span>
-            ) : (
-              <span style={{ opacity: 0.6 }}>DESCONECTADO</span>
-            )}
-          </button>
-      </div>
+      {showDisconnectConfirm && (
+        <div className="custom-confirm-overlay fade-in" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div className="custom-confirm-modal stagger-in" style={{ background: '#0F172A', borderRadius: '24px', padding: '32px 24px', width: '100%', maxWidth: '340px', textAlign: 'center', border: '1px solid #1E293B', boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>🚫</div>
+            <h3 style={{ fontSize: '22px', fontWeight: 900, marginBottom: '8px', color: 'white' }}>¿Finalizar Turno?</h3>
+            <p style={{ color: '#94A3B8', marginBottom: '32px', fontSize: '15px', fontWeight: 500, lineHeight: 1.4 }}>
+              Dejarás de recibir nuevas solicitudes de viajes cercanos.
+            </p>
+            <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+              <button 
+                className="interactive-scale"
+                style={{ flex: 1, padding: '16px', borderRadius: '16px', background: '#1E293B', color: 'white', fontWeight: 800, border: 'none', fontSize: '15px' }}
+                onClick={() => setShowDisconnectConfirm(false)}
+              >
+                Cancelar
+              </button>
+              <button 
+                className="interactive-scale"
+                style={{ flex: 1, padding: '16px', borderRadius: '16px', background: '#EF4444', color: 'white', fontWeight: 800, border: 'none', boxShadow: '0 8px 16px rgba(239, 68, 68, 0.2)', fontSize: '15px' }}
+                onClick={() => {
+                  setShowDisconnectConfirm(false);
+                  toggleOnline();
+                }}
+              >
+                Desconectar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="driver-content-transition" key={activeRide ? 'active' : 'available'}>
         {activeRide ? (
@@ -386,11 +432,58 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
           </div>
         ) : (
           <div className="available-rides-section stagger-in">
+            {isOnline && (
+              <div className="online-header-premium fade-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', padding: '0 8px' }}>
+                <div style={{ padding: '10px 20px', background: '#F1F5F9', borderRadius: '100px', color: '#0F172A', fontWeight: 900, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)' }}>
+                  <div className="pulse-indicator" style={{ background: '#3B82F6', width: '10px', height: '10px', boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.7)' }}></div> EN LÍNEA
+                </div>
+                <button 
+                    className="interactive-scale stop-btn-premium" 
+                    onClick={() => setShowDisconnectConfirm(true)}
+                    style={{ background: '#EF4444', border: '2px solid white', width: '48px', height: '48px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 16px rgba(239, 68, 68, 0.4)' }}
+                    title="Desconectarse"
+                >
+                  <div style={{ width: '16px', height: '16px', background: 'white', borderRadius: '4px' }}></div>
+                </button>
+              </div>
+            )}
+
             {!isOnline ? (
-              <div className="offline-state-premium fade-in" style={{ textAlign: 'center', padding: '60px 20px' }}>
-                <div style={{ fontSize: '48px', marginBottom: '20px', filter: 'grayscale(1)', opacity: 0.5 }}>😴</div>
-                <h3 style={{ fontSize: '20px', fontWeight: 900, marginBottom: '8px' }}>Estás fuera de servicio</h3>
-                <p style={{ color: '#6B7280', fontWeight: 600, fontSize: '14px' }}>Conéctate para empezar a recibir solicitudes de viajes cercanas.</p>
+              <div className="offline-state-premium fade-in" style={{ textAlign: 'center', padding: '20px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                
+                {/* Stats Panel */}
+                <div style={{ width: '100%', maxWidth: '340px', background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '28px', boxShadow: '0 8px 24px rgba(0,0,0,0.06)', border: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-around', alignItems: 'center' }}>
+                   <div style={{ textAlign: 'center' }}>
+                     <p style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ganancias de hoy</p>
+                     <p style={{ fontSize: '28px', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>
+                       <span style={{ fontSize: '18px', color: '#10B981', marginRight: '2px' }}>$</span>
+                       {driverStats?.todayEarnings?.toFixed(2) || '0.00'}
+                     </p>
+                   </div>
+                   <div style={{ width: '1px', height: '48px', background: '#E2E8F0' }}></div>
+                   <div style={{ textAlign: 'center' }}>
+                     <p style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Viajes de hoy</p>
+                     <p style={{ fontSize: '28px', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>
+                       {driverStats?.todayTrips || '0'}
+                     </p>
+                   </div>
+                </div>
+
+                <button 
+                  className="uber-go-button interactive-scale" 
+                  onClick={toggleOnline}
+                >
+                  <div className="go-pulse-ring"></div>
+                  <div className="go-pulse-ring-2"></div>
+                  <div className="go-btn-content">
+                    <span className="go-text">INICIAR</span>
+                    <span className="go-subtext">TURNO</span>
+                  </div>
+                </button>
+                <div style={{ marginTop: '40px', background: '#FFF8F1', border: '1px solid #FFE4CD', padding: '16px 24px', borderRadius: '16px' }}>
+                   <p style={{ color: '#C2410C', fontWeight: 800, fontSize: '14px', margin: 0 }}>Desconectado</p>
+                   <p style={{ color: '#9A3412', fontWeight: 500, fontSize: '13px', marginTop: '4px' }}>Toca el botón superior para empezar a recibir viajes.</p>
+                </div>
               </div>
             ) : rides.length === 0 ? (
               <SearchingRadar />

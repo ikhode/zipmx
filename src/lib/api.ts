@@ -191,6 +191,13 @@ class APIClient {
     });
   }
 
+  static async updateDriverStatus(isActive: boolean) {
+    return await this.request('/driver/status', {
+      method: 'POST',
+      body: JSON.stringify({ isActive }),
+    });
+  }
+
   static async verifyIdentity(data: { profilePhoto: string, idPhoto: string | null, type: string }) {
     return await this.request('/verify-identity', {
       method: 'POST',

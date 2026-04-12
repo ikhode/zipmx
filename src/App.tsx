@@ -518,7 +518,7 @@ export default function App() {
       {selectionMode === 'none' && (
         <div className={`zipp-premium-header ${isHeaderHidden ? 'hidden' : ''} mode-${mode}`}>
           <div className="zipp-header-left stagger-in">
-            <span className="zipp-logo-text">ZIPP</span>
+            <span className="zipp-logo-text">Zipp</span>
           </div>
           <div className="zipp-header-right stagger-in">
             {!session ? (
@@ -560,18 +560,19 @@ export default function App() {
         />
       )}
 
-       {selectionMode === 'none' && (
+      {selectionMode === 'none' && (
         <div className={`scroll-content experience-${mode}`}>
           {mode === 'passenger' ? (
             !planningStarted && !hasActiveRide ? (
-              <div className="home-content" style={{ pointerEvents: 'auto' }}>
+              <div className="home-content" style={{ pointerEvents: 'auto', display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                 <PassengerHome 
                   dropoffAddress={dropoffAddress}
                   onStartPlanning={handleStartPlanning}
                   onSelectService={handleSelectService}
                   onPromoClick={handlePromoClick}
                 />
-                <div className="home-map-preview-placeholder"></div>
+                {/* Contenedor en blanco para extender el diseño sobre el mapa y añadir widgets a futuro */}
+                <div style={{ flex: 1, backgroundColor: 'var(--bg-main, #ffffff)', minHeight: '35vh' }}></div>
               </div>
             ) : (
               <>
