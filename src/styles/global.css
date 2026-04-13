@@ -1057,6 +1057,17 @@ button:active {
   margin-bottom: -20px;
 }
 
+@keyframes dash-pulse {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.route-line-pulse {
+  filter: drop-shadow(0 0 8px rgba(0, 209, 255, 0.4));
+  animation: dash-pulse 1s linear infinite;
+}
+
 .selection-sheet-minimal {
   position: absolute;
   bottom: 0;

@@ -352,36 +352,20 @@ export function MapView({
         const controller = new AbortController();
         routeAbortControllerRef.current = controller;
 
-        // Race multiple public OSRM servers + our own local API proxy
-        const urls = [
-          `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
-          `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?overview=full&geometries=geojson`,
-          `/api/routing/route?coords=${coords}`
-        ];
+        const proxyUrl = `/api/routing/route?coords=${coords}`;
 
         const fetchRoute = (attempt = 1) => {
           if (controller.signal.aborted) return;
 
-          const fetchPromises = urls.map(url => 
-            fetch(url, { signal: controller.signal })
-              .then(async res => {
-                const contentType = res.headers.get('content-type');
-                if (!res.ok || !contentType || !contentType.includes('application/json')) {
-                  throw new Error(`Status ${res.status}`);
-                }
-                const data = await res.json();
-                if (data.code?.toLowerCase() !== 'ok' || !data.routes?.[0]?.geometry?.coordinates) {
-                  throw new Error(`Invalid data`);
-                }
-                return data;
-              })
-              .catch(err => {
-                console.error(`Fetch to ${url} failed:`, err.message);
-                throw err;
-              })
-          );
-
-          Promise.any(fetchPromises)
+          fetch(proxyUrl, { signal: controller.signal })
+            .then(async res => {
+              if (!res.ok) throw new Error(`Proxy Status ${res.status}`);
+              const data = await res.json();
+              if (data.code?.toLowerCase() !== 'ok' || !data.routes?.[0]?.geometry?.coordinates) {
+                throw new Error(`Invalid data from proxy`);
+              }
+              return data;
+            })
             .then((data: any) => {
               if (controller.signal.aborted || !mapRef.current) return;
 
@@ -408,6 +392,7 @@ export function MapView({
                 weight: 2,
                 dashArray: '8, 12',
                 opacity: 0.7,
+                className: 'route-line-pulse'
               }).addTo(mapRef.current);
             })
             .catch((err: any) => {
