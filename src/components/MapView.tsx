@@ -62,7 +62,8 @@ export function MapView({
     }).setView(center, zoom);
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; CARTO'
+      attribution: '&copy; CARTO',
+      crossOrigin: true
     }).addTo(map);
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);

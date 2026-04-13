@@ -10,6 +10,7 @@ export const users = sqliteTable('users', {
   profileImageUrl: text('profile_image_url'),
   passwordHash: text('password_hash'),
   verified: integer('verified', { mode: 'boolean' }).default(false),
+  pushSubscription: text('fcm_token'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 });

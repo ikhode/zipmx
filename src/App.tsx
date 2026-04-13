@@ -21,6 +21,7 @@ import { useLocationTracker } from './hooks/useLocationTracker';
 import { LegalPage } from './components/Legal';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { requestPushPermission } from './lib/push';
 
 type AppMode = 'passenger' | 'driver';
 
@@ -82,6 +83,8 @@ export default function App() {
   // Refs to fix stale closures in watchPosition
   const planningStartedRef = useRef(planningStarted);
   const selectionModeRef = useRef(selectionMode);
+
+  // Permiso movido a interacciones de usuario (StartPlanning y SwitchMode) para cumplir políticas del browser
   
   useEffect(() => { planningStartedRef.current = planningStarted; }, [planningStarted]);
   useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
@@ -417,6 +420,7 @@ export default function App() {
   const handleStartPlanning = useCallback((_field?: 'pickup' | 'dropoff') => {
     triggerHaptic('light');
     setPlanningStarted(true);
+    requestPushPermission().catch(console.error);
   }, []);
   const handleSelectService = useCallback((type: 'ride' | 'errand' | 'taxi' | 'mototaxi') => {
     triggerHaptic('medium');
@@ -489,12 +493,29 @@ export default function App() {
           setMode('driver');
           setPlanningStarted(false);
           setShowAccountMenu(false);
+          requestPushPermission().catch(console.error);
        }
     } else {
        setMode('passenger');
        setShowAccountMenu(false);
     }
   }, [hasActiveRide, mode, session, showToast]);
+
+  const computedPickup = useMemo<[number, number] | undefined>(() => {
+    return pickupLocation || (activeRide ? [activeRide.pickupLatitude, activeRide.pickupLongitude] : undefined);
+  }, [pickupLocation, activeRide?.pickupLatitude, activeRide?.pickupLongitude]);
+
+  const computedDropoff = useMemo<[number, number] | undefined>(() => {
+    return dropoffLocation || (activeRide ? [activeRide.dropoffLatitude, activeRide.dropoffLongitude] : undefined);
+  }, [dropoffLocation, activeRide?.dropoffLatitude, activeRide?.dropoffLongitude]);
+
+  const computedStops = useMemo<[number, number][]>(() => {
+    return stops.map(s => s.position);
+  }, [stops]);
+
+  const computedDriverLoc = useMemo<[number, number] | undefined>(() => {
+    return mode === 'driver' ? (userLocation || undefined) : (activeRideDriverLocation || undefined);
+  }, [mode, userLocation, activeRideDriverLocation]);
 
   return (
     <div className={`app-container ${mode === 'passenger' && !pickupLocation && !dropoffLocation && selectionMode === 'none' ? 'is-home' : ''}`}>
@@ -503,10 +524,10 @@ export default function App() {
         <MapView 
           center={mapCenter}
           zoom={15}
-          pickupLocation={pickupLocation || (activeRide ? [activeRide.pickupLatitude, activeRide.pickupLongitude] : undefined)}
-          dropoffLocation={dropoffLocation || (activeRide ? [activeRide.dropoffLatitude, activeRide.dropoffLongitude] : undefined)}
-          driverLocation={mode === 'driver' ? (userLocation || undefined) : (activeRideDriverLocation || undefined)}
-          stops={stops.map(s => s.position)}
+          pickupLocation={computedPickup}
+          dropoffLocation={computedDropoff}
+          driverLocation={computedDriverLoc}
+          stops={computedStops}
           selectingLocation={selectionMode !== 'none'}
           onLocationSelected={(loc) => setTempLocation(loc)}
           onMapInteraction={handleMapInteraction}

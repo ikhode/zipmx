@@ -14,6 +14,7 @@ type Bindings = {
   MERCADOPAGO_ACCESS_TOKEN: string;
   LOCATION_TRACKER: DurableObjectNamespace;
   STORAGE: R2Bucket;
+  VAPID_PRIVATE_KEY?: string;
 };
 
 type JWTPayload = {
@@ -27,10 +28,46 @@ const app = new Hono<{ Bindings: Bindings }>().basePath('/api');
 const getSecret = (c: Context<{ Bindings: Bindings }>): string => {
   const secret = c.env?.JWT_SECRET;
   if (secret) return secret;
-  // Fallback for local dev — wrangler pages dev does not inject Pages secrets
-  console.warn('[getSecret] JWT_SECRET not set — using dev fallback. Set it via: wrangler pages secret put JWT_SECRET');
-  return 'dev-secret-keep-it-safe-never-use-in-prod';
+  // Fallback for local dev
+  return 'super-secret-dev-jwt-key!_update_in_prod';
 };
+
+import webpush from 'web-push';
+
+const VAPID_PUBLIC_KEY = 'BAUYCP62A2X6DrcfXh_zYOWNMEG2LlevQ7DTWeh9LbyweeguGn2aRyJkktrc246AprcH7Il-hifvHDM9RGQ578E';
+
+/**
+ * Función genérica de Push que usa Web Push Nativo
+ */
+async function sendPush(pushSubscriptionObjBase64OrJson: string, title: string, body: string, c: Context<{ Bindings: Bindings }>, data: Record<string, string> = {}) {
+  const privateKey = c.env?.VAPID_PRIVATE_KEY || 'xPfOhpRZadnvZD_UH5hwTtbFBJBVnhrVSW9NLevhTWk'; // Fallback dev key
+  
+  if (!pushSubscriptionObjBase64OrJson) return;
+
+  try {
+    const subObj = JSON.parse(pushSubscriptionObjBase64OrJson);
+    
+    webpush.setVapidDetails(
+      'mailto:contacto@monpra.com',
+      VAPID_PUBLIC_KEY,
+      privateKey
+    );
+
+    const payload = JSON.stringify({
+      title,
+      body,
+      data: {
+        ...data,
+        click_action: "FLUTTER_NOTIFICATION_CLICK" 
+      }
+    });
+
+    await webpush.sendNotification(subObj, payload);
+    console.log(`[WebPush] Push enviado exitosamente a la suscripción.`);
+  } catch (err) {
+    console.error('[WebPush] Error de red o encriptación al enviar push:', err);
+  }
+}
 
 const authGuard = (c: Context<{ Bindings: Bindings }>, next: Next) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
 
@@ -487,12 +524,13 @@ app.get('/profile', authGuard, async (c) => {
 
 app.patch('/profile', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
-  const { fullName, email } = await c.req.json();
+  const { fullName, email, pushSubscription } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
 
   const updateData: Partial<typeof schema.users.$inferInsert> = { updatedAt: new Date().toISOString() };
   if (fullName) updateData.fullName = fullName;
   if (email) updateData.email = email;
+  if (pushSubscription) updateData.pushSubscription = pushSubscription;
 
   try {
     await db.update(schema.users).set(updateData).where(eq(schema.users.id, payload.id));
@@ -711,6 +749,15 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   await db.update(schema.rides).set({
     driverId: payload.id, status: 'accepted', acceptedAt: new Date().toISOString(),
   }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested')));
+
+  // Trigger push to passenger
+  try {
+    const passenger = await db.query.users.findFirst({ where: eq(schema.users.id, ride.passengerId) });
+    if (passenger?.pushSubscription) {
+       await sendPush(passenger.pushSubscription, '¡Tu viaje fue aceptado!', 'El conductor va en camino hacia tu punto de recogida.', c);
+    }
+  } catch (e) { console.error(e); }
+
   return c.json({ success: true });
 });
 
@@ -721,6 +768,19 @@ app.post('/rides/:id/status', authGuard, async (c) => {
   const update: Partial<typeof schema.rides.$inferInsert> = { status };
 
   if (status === 'in_progress') update.startedAt = new Date().toISOString();
+
+  if (status === 'arrived') {
+    // Trigger push to passenger
+    try {
+      const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId) });
+      if (ride && ride.passengerId) {
+         const passenger = await db.query.users.findFirst({ where: eq(schema.users.id, ride.passengerId) });
+         if (passenger?.pushSubscription) {
+            await sendPush(passenger.pushSubscription, '¡Tu conductor ha llegado!', 'Sal al punto de encuentro, el conductor te está esperando.', c);
+         }
+      }
+    } catch (e) { console.error(e); }
+  }
 
   if (status === 'completed') {
     update.completedAt = new Date().toISOString();

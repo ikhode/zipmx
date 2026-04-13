@@ -546,8 +546,9 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                 { id: 'rickshaw', name: 'Mototaxi', icon: '🛺', cap: 3 }
                 ].map(v => {
                 const dist = pickupLocation && dropoffLocation ? calculateDistance(pickupLocation[0], pickupLocation[1], dropoffLocation[0], dropoffLocation[1]) : 1;
+                const duration = Math.ceil(dist * 2.5) + 2;
                 const rate = VEHICLE_RATES[v.id] || VEHICLE_RATES['car'];
-                const price = Math.ceil(rate.base + (dist * rate.km) + (dist * 2.5 * rate.min));
+                const price = Math.ceil(rate.base + (dist * rate.km) + (duration * rate.min));
                 
                 return (
                     <div key={v.id} className={`vehicle-item-minimal interactive-scale ${vehicleType === v.id ? 'active' : ''}`} onClick={() => { setVehicleType(v.id); triggerHaptic('light'); }}>

@@ -26,6 +26,7 @@ describe('DriverModeSheet Component', () => {
       profileImageUrl: null,
       passwordHash: null,
       verified: true,
+      pushSubscription: null,
       createdAt: null,
       updatedAt: null
     } 
