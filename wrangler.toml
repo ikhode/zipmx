@@ -1,5 +1,5 @@
 name = "zipp"
-compatibility_date = "2024-04-03"
+compatibility_date = "2024-09-23"
 pages_build_output_dir = "dist"
 compatibility_flags = ["nodejs_compat"]
 

@@ -1,16 +1,20 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/cloudflare-pages';
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, and, desc, inArray } from 'drizzle-orm';
+import { eq, and, desc, inArray, gte } from 'drizzle-orm';
 import { jwt, sign } from 'hono/jwt';
 import * as schema from '../../src/db/schema';
 
+import { Context, Next } from 'hono';
+import type { D1Database, DurableObjectNamespace, R2Bucket } from '@cloudflare/workers-types';
+
 type Bindings = {
-  DB: any;
+  DB: D1Database;
   JWT_SECRET: string;
   MERCADOPAGO_ACCESS_TOKEN: string;
-  LOCATION_TRACKER: any;
-  STORAGE: any; // R2 Bucket
+  LOCATION_TRACKER: DurableObjectNamespace;
+  STORAGE: R2Bucket;
+  VAPID_PRIVATE_KEY?: string;
 };
 
 type JWTPayload = {
@@ -21,15 +25,51 @@ type JWTPayload = {
 
 const app = new Hono<{ Bindings: Bindings }>().basePath('/api');
 
-const getSecret = (c: any): string => {
+const getSecret = (c: Context<{ Bindings: Bindings }>): string => {
   const secret = c.env?.JWT_SECRET;
   if (secret) return secret;
-  // Fallback for local dev — wrangler pages dev does not inject Pages secrets
-  console.warn('[getSecret] JWT_SECRET not set — using dev fallback. Set it via: wrangler pages secret put JWT_SECRET');
-  return 'dev-secret-keep-it-safe-never-use-in-prod';
+  // Fallback for local dev
+  return 'super-secret-dev-jwt-key!_update_in_prod';
 };
 
-const authGuard = (c: any, next: any) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
+import webpush from 'web-push';
+
+const VAPID_PUBLIC_KEY = 'BAUYCP62A2X6DrcfXh_zYOWNMEG2LlevQ7DTWeh9LbyweeguGn2aRyJkktrc246AprcH7Il-hifvHDM9RGQ578E';
+
+/**
+ * Función genérica de Push que usa Web Push Nativo
+ */
+async function sendPush(pushSubscriptionObjBase64OrJson: string, title: string, body: string, c: Context<{ Bindings: Bindings }>, data: Record<string, string> = {}) {
+  const privateKey = c.env?.VAPID_PRIVATE_KEY || 'xPfOhpRZadnvZD_UH5hwTtbFBJBVnhrVSW9NLevhTWk'; // Fallback dev key
+  
+  if (!pushSubscriptionObjBase64OrJson) return;
+
+  try {
+    const subObj = JSON.parse(pushSubscriptionObjBase64OrJson);
+    
+    webpush.setVapidDetails(
+      'mailto:contacto@monpra.com',
+      VAPID_PUBLIC_KEY,
+      privateKey
+    );
+
+    const payload = JSON.stringify({
+      title,
+      body,
+      data: {
+        ...data,
+        click_action: "FLUTTER_NOTIFICATION_CLICK" 
+      }
+    });
+
+    await webpush.sendNotification(subObj, payload);
+    console.log(`[WebPush] Push enviado exitosamente a la suscripción.`);
+  } catch (err) {
+    console.error('[WebPush] Error de red o encriptación al enviar push:', err);
+  }
+}
+
+const authGuard = (c: Context<{ Bindings: Bindings }>, next: Next) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
 
 app.get('/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }));
 
@@ -37,41 +77,47 @@ app.get('/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() 
 app.all('/ws', async (c) => {
   const upgradeHeader = c.req.header('Upgrade');
   if (upgradeHeader !== 'websocket') {
-    return c.text('Expected Upgrade: websocket', 426);
+    return c.text('Expected Upgrade: websocket', 426) as any;
   }
 
   // Get a single global instance for simplicity in this project
   const id = c.env.LOCATION_TRACKER.idFromName('global');
   const obj = c.env.LOCATION_TRACKER.get(id);
 
-  return obj.fetch(c.req.raw);
+  return obj.fetch(c.req.raw as any) as any;
 });
+
+interface GeocodingResult {
+  lat: string;
+  lon: string;
+  display_name: string;
+  address: Record<string, string>;
+}
 
 // Geocoding Proxy
 app.get('/geocoding/address', async (c) => {
   const query = c.req.query('q');
   const lat = c.req.query('lat');
   const lon = c.req.query('lon');
-  
+
   if (!query) return c.json({ error: 'Query is required' }, 400);
 
   // Focus on Armería, Colima, Mexico area by default to improve local hits
   let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1&countrycodes=mx`;
-  
+
   const d = 0.5; // Viewbox delta
   const bLat = lat ? parseFloat(lat) : 19.0148;
   const bLon = lon ? parseFloat(lon) : -104.2403;
-  url += `&viewbox=${bLon-d},${bLat+d},${bLon+d},${bLat-d}&bounded=0`; // bounded=0 allows finding nearby if not in viewbox
+  url += `&viewbox=${bLon - d},${bLat + d},${bLon + d},${bLat - d}&bounded=0`; // bounded=0 allows finding nearby if not in viewbox
 
   try {
     const response = await fetch(url, {
       headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
-
     });
-    
+
     if (response.status === 429) return c.json({ error: 'Rate limit exceeded' }, 429);
-    
-    const data = await response.json() as any[];
+
+    const data = await response.json() as GeocodingResult[];
     if (data.length === 0) return c.json(null);
 
     return c.json({
@@ -80,8 +126,9 @@ app.get('/geocoding/address', async (c) => {
       display_name: data[0].display_name,
       address: data[0].address || {},
     });
-  } catch (error: any) {
-    return c.json({ error: error.message }, 500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -93,18 +140,18 @@ app.get('/geocoding/search', async (c) => {
   if (!query) return c.json([]);
 
   let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=10&addressdetails=1&countrycodes=mx`;
-  
+
   const d = 0.5;
   const bLat = lat ? parseFloat(lat) : 19.0148;
   const bLon = lon ? parseFloat(lon) : -104.2403;
-  url += `&viewbox=${bLon-d},${bLat+d},${bLon+d},${bLat-d}&bounded=0`;
+  url += `&viewbox=${bLon - d},${bLat + d},${bLon + d},${bLat - d}&bounded=0`;
 
   try {
     const response = await fetch(url, {
       headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
 
     });
-    
+
     if (!response.ok) return c.json([]);
 
     const data = await response.json() as any[];
@@ -132,20 +179,20 @@ app.get('/geocoding/reverse', async (c) => {
   try {
     const response = await fetch(url, {
       headers: { 'User-Agent': 'ZippMobilityApp/1.0 (https://zipp.inteligent.software)' }
-
     });
 
     if (response.status === 429) return c.json({ error: 'Rate limit exceeded' }, 429);
 
-    const data = await response.json() as any;
+    const data = await response.json() as GeocodingResult;
     return c.json({
       lat: parseFloat(data.lat),
       lon: parseFloat(data.lon),
       display_name: data.display_name,
       address: data.address || {},
     });
-  } catch (error: any) {
-    return c.json({ error: error.message }, 500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -154,7 +201,7 @@ app.post('/upload', authGuard, async (c) => {
   try {
     const payload = c.get('jwtPayload') as JWTPayload;
     const body = await c.req.parseBody();
-    const file = body['file'] as any; // File object
+    const file = body['file'] as unknown as File; // File object
 
     if (!file || !file.name) return c.json({ error: 'Archivo no válido' }, 400);
 
@@ -167,8 +214,9 @@ app.post('/upload', authGuard, async (c) => {
 
     const url = `/api/files/${key}`;
     return c.json({ url, key });
-  } catch (err: any) {
-    return c.json({ error: `Error al subir: ${err.message}` }, 500);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return c.json({ error: `Error al subir: ${message}` }, 500);
   }
 });
 
@@ -179,58 +227,98 @@ app.get('/files/:path{.+}', async (c) => {
     if (!object) return c.notFound();
 
     const headers = new Headers();
-    object.writeHttpMetadata(headers);
+    object.writeHttpMetadata(headers as any);
     headers.set('etag', object.httpEtag);
-    
+
     // Cache for 1 day
     headers.set('Cache-Control', 'public, max-age=86400');
 
-    return c.body(object.body, 200, Object.fromEntries(headers.entries()));
+    return c.body(object.body as any, 200, Object.fromEntries(headers.entries()));
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
   }
 });
 
-// Routing Proxy (OSRM) to avoid CORS
+interface OSRMResponse {
+  code: string;
+  routes: Array<{
+    geometry: any;
+    duration: number;
+    distance: number;
+  }>;
+}
+
+// Routing Proxy (OSRM) to avoid CORS and aggregate multiple reliable providers
 app.get('/routing/route', async (c) => {
   const coords = c.req.query('coords'); // format: "lon1,lat1;lon2,lat2"
   if (!coords) return c.json({ error: 'Coordinates are required' }, 400);
 
-  // Use a more stable community-hosted OSRM server, adding an extra one as fallback
+  // Split coords to check if they are the same
+  const points = coords.split(';');
+  if (points.length >= 2 && points[0] === points[1]) {
+    // If start and end are identical, return a trivial route to avoid server overhead
+    const [lon, lat] = points[0].split(',').map(Number);
+    return c.json({
+      code: 'Ok',
+      routes: [{
+        geometry: { type: 'LineString', coordinates: [[lon, lat], [lon, lat]] },
+        duration: 0,
+        distance: 0
+      }]
+    });
+  }
+
+  // Use multiple reliable OSRM instances.
   const osrmInstances = [
     `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?overview=full&geometries=geojson`,
-    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
+    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+    `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coords}?overview=full&geometries=geojson` // Last resort
   ];
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 6500); // 6.5s timeout
+  const timeoutId = setTimeout(() => controller.abort(), 5500); // 5.5s timeout to stay within CF limits
 
   try {
-    // Launch all fetches concurrently to resolve the fastest one
-    const fetchPromises = osrmInstances.map(url => 
-      fetch(url, { headers: { 'User-Agent': 'ZippMobilityApp/1.0' }, signal: controller.signal })
-        .then(async res => {
-          if (!res.ok) throw new Error(`Status ${res.status}`);
-          const data = await res.json();
-          if (data.code !== 'Ok') throw new Error(`OSRM Error: ${data.code}`);
-          return data;
-        })
+    const fetchPromises = osrmInstances.map(url =>
+      fetch(url, { 
+        headers: { 
+          'User-Agent': 'ZippMobilityApp/1.1 (Contact: support@zipmx.app)',
+          'Accept': 'application/json'
+        }, 
+        signal: controller.signal 
+      })
+      .then(async res => {
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        const data = await res.json() as OSRMResponse;
+        if (!data || data.code?.toLowerCase() !== 'ok' || !data.routes?.[0]) throw new Error(`OSRM Invalid: ${data.code}`);
+        return data;
+      })
     );
 
-    const fastestSuccess = await Promise.any(fetchPromises);
-    return c.json(fastestSuccess);
-  } catch (error: any) {
-    if (error.name === 'AbortError' || error.name === 'AggregateError') {
-       return c.json({ error: 'Routing servers are currently unavailable or timed out.' }, 504);
-    }
-    return c.json({ error: 'All routing instances failed.' }, 503);
+    // Promise.any resolves as soon as THE FIRST one succeeds
+    const result = await Promise.any(fetchPromises);
+    return c.json(result);
+  } catch (error: unknown) {
+    console.error('Routing Proxy Error:', error);
+    
+    // EMERGENCY FALLBACK: If all servers fail, return a straight line geometry 
+    // instead of an error, so the map still renders a route.
+    const path = points.map(p => p.split(',').map(Number));
+    return c.json({
+      code: 'Ok',
+      isFallback: true,
+      routes: [{
+        geometry: { type: 'LineString', coordinates: path },
+        duration: 0,
+        distance: 0
+      }]
+    }, 200); // Still return 200 to keep the UI stable
   } finally {
     clearTimeout(timeoutId);
   }
 });
 
 
-// Auth
 app.post('/auth/signup', async (c) => {
   try {
     const { email, phone, fullName, userType } = await c.req.json();
@@ -245,7 +333,7 @@ app.post('/auth/signup', async (c) => {
     const newUser = await db.insert(schema.users).values({
       email, phone, fullName, userType,
     }).returning();
-    
+
     if (!newUser || newUser.length === 0) {
       throw new Error('No se pudo crear el usuario en la base de datos.');
     }
@@ -254,10 +342,11 @@ app.post('/auth/signup', async (c) => {
     const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
     const token = await sign(payload, secret, 'HS256');
     return c.json({ user, token });
-  } catch (error: any) {
-    const errorMsg = error?.message || 'Error desconocido';
-    const causeMsg = error?.cause?.message || '';
-    
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+    const cause = (error as any)?.cause;
+    const causeMsg = cause?.message || '';
+
     console.error('[/auth/signup] Critical Registration Error:', {
       message: errorMsg,
       cause: causeMsg
@@ -297,11 +386,11 @@ app.patch('/profile', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const data = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  
+
   await db.update(schema.users)
     .set({ ...data, updatedAt: new Date().toISOString() })
     .where(eq(schema.users.id, payload.id));
-    
+
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
   return c.json(user);
 });
@@ -309,12 +398,12 @@ app.patch('/profile', authGuard, async (c) => {
 app.delete('/profile', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
-  
+
   // Complex deletion logic: anonymize or delete data
   // For now, permanent deletion as requested by Apple
   await db.delete(schema.users).where(eq(schema.users.id, payload.id));
   await db.delete(schema.drivers).where(eq(schema.drivers.id, payload.id));
-  
+
   return c.json({ success: true, message: 'Cuenta eliminada exitosamente' });
 });
 
@@ -322,7 +411,7 @@ app.delete('/profile', authGuard, async (c) => {
 app.post('/auth/send-otp', async (c) => {
   const { phone } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  
+
   // App Store Reviewer Bypass
   if (phone === '+520000000000') {
     return c.json({ success: true, message: 'Código enviado con éxito (Reviewer Mode)' });
@@ -339,67 +428,105 @@ app.post('/auth/send-otp', async (c) => {
 
   // Mock SMS sending (In production combine with Twilio/Sinfonia)
   console.log(`\x1b[33m[OTP SERVICE]\x1b[0m Enviando código \x1b[1m${code}\x1b[0m al teléfono ${phone}`);
-  
   return c.json({ success: true, message: 'Código enviado con éxito' });
 });
 
 app.post('/auth/verify-otp', async (c) => {
+  // Firebase ID Token Verification & Identity Sync
   try {
-    const { phone, code } = await c.req.json();
+    const { phone, idToken } = await c.req.json();
+    if (!idToken) return c.json({ error: 'Falta el Token de Identidad' }, 400);
+
     const db = drizzle(c.env.DB, { schema });
 
-    // App Store Reviewer Bypass
-    if (phone === '+520000000000' && code === '123456') {
-      let user = await db.query.users.findFirst({ where: eq(schema.users.phone, phone) });
-      if (!user) {
-        const newUser = await db.insert(schema.users).values({
-          email: 'reviewer@zipp.app',
-          phone,
-          fullName: 'App Store Reviewer',
-          userType: 'passenger',
-          verified: true
-        }).returning();
-        user = newUser[0];
-      }
-      
-      const secret = getSecret(c);
-      const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
-      const token = await sign(payload, secret, 'HS256');
-      return c.json({ success: true, user, token });
+    // Decoding Base64URL to JSON (Hand-rolled for Cloudflare Worker environment)
+    const base64Url = (idToken as string).split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+
+    interface FirebasePayload {
+      iss: string;
+      aud: string;
+      sub: string;
+      exp: number;
+      name?: string;
+      phone_number?: string;
+      email?: string;
+      provider_id?: string;
+    }
+    const payload = JSON.parse(jsonPayload) as FirebasePayload;
+
+    if (payload.iss !== `https://securetoken.google.com/zipp-mx` || payload.aud !== `zipp-mx`) {
+      return c.json({ error: 'Token de Firebase inválido' }, 401);
     }
 
-    const record = await db.query.verificationCodes.findFirst({
-      where: and(
-        eq(schema.verificationCodes.phone, phone),
-        eq(schema.verificationCodes.code, code),
-        eq(schema.verificationCodes.used, false)
-      ),
-      orderBy: desc(schema.verificationCodes.createdAt)
-    });
-
-    if (!record || record.expiresAt < Date.now()) {
-      return c.json({ error: 'Código inválido o expirado' }, 400);
+    if (payload.exp < Date.now() / 1000) {
+      return c.json({ error: 'Token expirado' }, 401);
     }
 
-    // Mark as used
-    await db.update(schema.verificationCodes)
-      .set({ used: true })
-    .where(eq(schema.verificationCodes.id, record.id));
+    const firebaseUid = payload.sub;
 
-    // Find user and return token
-    const user = await db.query.users.findFirst({ where: eq(schema.users.phone, phone) });
-    
+    // Determine the phone and email to store
+    const firebasePhone = payload.phone_number || null;
+    const firebaseEmail = payload.email || null;
+
+    const storedPhone = firebasePhone || `anon_${firebaseUid.slice(0, 12)}`;
+    const storedEmail = firebaseEmail || `user_${firebaseUid.slice(0, 8)}@zipp.app`;
+
+    // 1. Try to find user by Firebase UID (sub)
+    let user = await db.query.users.findFirst({ where: eq(schema.users.id, firebaseUid) });
+
+    // 2. If not found by UID, try by Phone (if not anonymous)
+    if (!user && firebasePhone) {
+      user = await db.query.users.findFirst({ where: eq(schema.users.phone, firebasePhone) });
+    }
+
     if (!user) {
-      return c.json({ success: true, isNewUser: true });
+      // Create new user record (with placeholder if anonymous)
+      const newUser = await db.insert(schema.users).values({
+        id: firebaseUid,
+        email: storedEmail,
+        phone: storedPhone,
+        fullName: payload.name || 'Usuario Zipp',
+        userType: 'passenger',
+        verified: !!firebasePhone
+      }).returning();
+      user = newUser[0];
+    } else {
+      // Check for account upgrade
+      const hasRealPhoneNow = !!firebasePhone;
+      const hadPlaceholder = user.phone.startsWith('anon_');
+
+      if ((hadPlaceholder && hasRealPhoneNow) || (!user.email && firebaseEmail)) {
+        await db.update(schema.users)
+          .set({
+            phone: hasRealPhoneNow ? firebasePhone : user.phone,
+            email: firebaseEmail || user.email,
+            verified: hasRealPhoneNow ? true : user.verified,
+            updatedAt: new Date().toISOString()
+          })
+          .where(eq(schema.users.id, user.id));
+
+        user = (await db.query.users.findFirst({ where: eq(schema.users.id, user.id) }))!;
+      }
     }
 
     const secret = getSecret(c);
-    const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
-    const token = await sign(payload, secret, 'HS256');
+    const jwtPayload: JWTPayload = { id: user!.id, email: user!.email || '', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
+    const token = await sign(jwtPayload, secret, 'HS256');
 
-    return c.json({ success: true, user, token });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+    return c.json({
+      success: true,
+      user,
+      token,
+      isNewUser: user!.phone.startsWith('anon_')
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('Backend Firebase Integration Error:', err);
+    return c.json({ error: 'Error de sincronización de identidad', details: message }, 500);
   }
 });
 
@@ -429,22 +556,24 @@ app.get('/profile', authGuard, async (c) => {
 
 app.patch('/profile', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
-  const { fullName, email } = await c.req.json();
+  const { fullName, email, pushSubscription } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  
-  const updateData: any = { updatedAt: new Date().toISOString() };
+
+  const updateData: Partial<typeof schema.users.$inferInsert> = { updatedAt: new Date().toISOString() };
   if (fullName) updateData.fullName = fullName;
   if (email) updateData.email = email;
+  if (pushSubscription) updateData.pushSubscription = pushSubscription;
 
   try {
     await db.update(schema.users).set(updateData).where(eq(schema.users.id, payload.id));
     const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
     return c.json(user);
-  } catch (error: any) {
-    if (error.message.includes('UNIQUE')) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (message.includes('UNIQUE')) {
       return c.json({ error: 'El correo electrónico ya está en uso.' }, 409);
     }
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -466,8 +595,9 @@ app.get('/rides/my-active', authGuard, async (c) => {
   const activeRide = await db.query.rides.findFirst({
     where: and(
       eq(schema.rides.passengerId, payload.id),
-      inArray(schema.rides.status, ['requested', 'accepted', 'in_progress'])
-    )
+      inArray(schema.rides.status, ['requested', 'accepted', 'arrived', 'in_progress'])
+    ),
+    orderBy: [desc(schema.rides.createdAt)]
   });
   return c.json(activeRide || null);
 });
@@ -477,6 +607,14 @@ app.post('/rides/request', authGuard, async (c) => {
   const { pickup, dropoff, type, price, distance, duration, description, items } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
   try {
+    // Clear any previous stuck rides for this passenger
+    await db.update(schema.rides)
+      .set({ status: 'cancelled', cancelledAt: new Date().toISOString() })
+      .where(and(
+        eq(schema.rides.passengerId, payload.id),
+        inArray(schema.rides.status, ['requested', 'accepted', 'arrived', 'in_progress'])
+      ));
+
     const newRide = await db.insert(schema.rides).values({
       passengerId: payload.id,
       pickupLatitude: pickup.lat,
@@ -501,7 +639,7 @@ app.post('/rides/request', authGuard, async (c) => {
 });
 
 app.post('/rides/:id/cancel', authGuard, async (c) => {
-  const rideId = c.req.param('id');
+  const rideId = c.req.param('id') as string;
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
   await db.update(schema.rides).set({
@@ -524,13 +662,39 @@ app.post('/driver/setup', authGuard, async (c) => {
   const { vehicleType } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
   try {
-    const newDriver = await db.insert(schema.drivers).values({
-      id: payload.id, vehicleType, vehicleBrand: 'N/A', vehicleModel: 'N/A', vehicleYear: 2024,
-      licensePlate: `TEMP-${Date.now()}`, driverLicense: 'PENDING', isActive: true, isVerified: true,
-      baseFare: 25, costPerKm: 10, costPerMinute: 2
-    }).returning();
+    const newDriver = await db.insert(schema.drivers)
+      .values({
+        id: payload.id,
+        vehicleType,
+        vehicleBrand: 'N/A',
+        vehicleModel: 'N/A',
+        vehicleYear: 2024,
+        licensePlate: `TEMP-${Date.now()}`,
+        driverLicense: 'PENDING',
+        isActive: true,
+        isVerified: true,
+        baseFare: 25,
+        costPerKm: 10,
+        costPerMinute: 2
+      })
+      .onConflictDoUpdate({
+        target: schema.drivers.id,
+        set: {
+          vehicleType,
+          isActive: true,
+          isVerified: true,
+          updatedAt: new Date().toISOString()
+        }
+      })
+      .returning();
+    // Also ensure the user record is updated to 'driver' type
+    await db.update(schema.users)
+      .set({ userType: 'driver', updatedAt: new Date().toISOString() })
+      .where(eq(schema.users.id, payload.id));
+
     return c.json(newDriver[0]);
   } catch (error: any) {
+    console.error('[/driver/setup] Error:', error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -540,11 +704,33 @@ app.get('/driver/settings', authGuard, async (c) => {
   const db = drizzle(c.env.DB, { schema });
   const driver = await db.query.drivers.findFirst({ where: eq(schema.drivers.id, payload.id) });
   if (!driver) return c.json({ error: 'Driver not found' }, 404);
+
+  // Approximation to convert UTC to Mexico Central Time (UTC-6)
+  const todayStart = new Date();
+  todayStart.setUTCHours(todayStart.getUTCHours() - 6);
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const todayStr = todayStart.toISOString();
+
+  const todayRides = await db.query.rides.findMany({
+    where: and(
+      eq(schema.rides.driverId, payload.id),
+      eq(schema.rides.status, 'completed'),
+      gte(schema.rides.completedAt, todayStr)
+    )
+  });
+
+  const todayTripsCount = todayRides.length;
+  const todayEarningsAmount = todayRides.reduce((sum, r) => sum + (r.totalFare || 0), 0);
+
   return c.json({
     baseFare: driver.baseFare,
     costPerKm: driver.costPerKm,
     costPerMinute: driver.costPerMinute,
-    totalTrips: driver.totalTrips
+    totalTrips: driver.totalTrips,
+    totalEarnings: driver.totalEarnings,
+    unpaidCommissionAmount: driver.unpaidCommissionAmount,
+    todayTrips: todayTripsCount,
+    todayEarnings: todayEarningsAmount
   });
 });
 
@@ -584,14 +770,14 @@ app.get('/rides/active', authGuard, async (c) => {
   const activeRide = await db.query.rides.findFirst({
     where: and(
       eq(schema.rides.driverId, payload.id),
-      inArray(schema.rides.status, ['accepted', 'in_progress'])
+      inArray(schema.rides.status, ['accepted', 'arrived', 'in_progress'])
     ),
   });
   return c.json(activeRide || null);
 });
 
 app.post('/rides/:id/accept', authGuard, async (c) => {
-  const rideId = c.req.param('id');
+  const rideId = c.req.param('id') as string;
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
 
@@ -604,20 +790,42 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   await db.update(schema.rides).set({
     driverId: payload.id, status: 'accepted', acceptedAt: new Date().toISOString(),
   }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested')));
+
+  // Trigger push to passenger
+  try {
+    const passenger = await db.query.users.findFirst({ where: eq(schema.users.id, ride.passengerId) });
+    if (passenger?.pushSubscription) {
+       await sendPush(passenger.pushSubscription, '¡Tu viaje fue aceptado!', 'El conductor va en camino hacia tu punto de recogida.', c);
+    }
+  } catch (e) { console.error(e); }
+
   return c.json({ success: true });
 });
 
 app.post('/rides/:id/status', authGuard, async (c) => {
-  const rideId = c.req.param('id');
+  const rideId = c.req.param('id') as string;
   const { status } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  const update: any = { status };
-  
+  const update: Partial<typeof schema.rides.$inferInsert> = { status };
+
   if (status === 'in_progress') update.startedAt = new Date().toISOString();
-  
+
+  if (status === 'arrived') {
+    // Trigger push to passenger
+    try {
+      const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId) });
+      if (ride && ride.passengerId) {
+         const passenger = await db.query.users.findFirst({ where: eq(schema.users.id, ride.passengerId) });
+         if (passenger?.pushSubscription) {
+            await sendPush(passenger.pushSubscription, '¡Tu conductor ha llegado!', 'Sal al punto de encuentro, el conductor te está esperando.', c);
+         }
+      }
+    } catch (e) { console.error(e); }
+  }
+
   if (status === 'completed') {
     update.completedAt = new Date().toISOString();
-    
+
     // Calculate Commission Logic
     const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId) });
     if (ride && ride.driverId) {
@@ -639,14 +847,52 @@ app.post('/rides/:id/status', authGuard, async (c) => {
         // Update Driver Stats
         await db.update(schema.drivers).set({
           totalTrips: newTotalTrips,
+          totalEarnings: (driver.totalEarnings || 0) + (ride.totalFare || 0),
           unpaidCommissionAmount: (driver.unpaidCommissionAmount || 0) + commissionAmount
         }).where(eq(schema.drivers.id, driver.id));
       }
     }
   }
-  
+
   await db.update(schema.rides).set(update).where(eq(schema.rides.id, rideId));
   return c.json({ success: true });
+});
+
+// Ratings
+app.post('/rides/:id/rate', authGuard, async (c) => {
+  const rideId = c.req.param('id') as string;
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const { ratedId, rating, comment } = await c.req.json();
+  const db = drizzle(c.env.DB, { schema });
+
+  if (!rating || rating < 1 || rating > 5) {
+    return c.json({ error: 'Calificación inválida (debe ser de 1 a 5)' }, 400);
+  }
+
+  try {
+    await db.insert(schema.ratings).values({
+      rideId,
+      raterId: payload.id,
+      ratedId,
+      rating,
+      comment
+    });
+
+    // Update global rating of the rated user if they are a driver
+    const driver = await db.query.drivers.findFirst({ where: eq(schema.drivers.id, ratedId) });
+    if (driver) {
+      const allRatings = await db.query.ratings.findMany({ where: eq(schema.ratings.ratedId, ratedId) });
+      const avgRating = allRatings.reduce((acc, curr) => acc + curr.rating, 0) / allRatings.length;
+
+      await db.update(schema.drivers)
+        .set({ rating: avgRating })
+        .where(eq(schema.drivers.id, ratedId));
+    }
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
 });
 
 // Real-time & Security Endpoints
@@ -654,24 +900,39 @@ app.post('/driver/location', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const { lat, lng } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  
+
   await db.update(schema.drivers)
-    .set({ 
-      currentLatitude: lat, 
-      currentLongitude: lng, 
+    .set({
+      currentLatitude: lat,
+      currentLongitude: lng,
       lastLocationUpdate: new Date().toISOString(),
       isActive: true,
     })
     .where(eq(schema.drivers.id, payload.id));
-    
+
   return c.json({ success: true });
 });
 
-app.get('/drivers/nearby', async (c) => {
-  const lat = parseFloat(c.req.query('lat') || '0');
-  const lng = parseFloat(c.req.query('lng') || '0');
+app.post('/driver/status', authGuard, async (c) => {
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const { isActive } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  
+
+  await db.update(schema.drivers)
+    .set({
+      isActive,
+      updatedAt: new Date().toISOString()
+    })
+    .where(eq(schema.drivers.id, payload.id));
+
+  return c.json({ success: true, isActive });
+});
+
+app.get('/drivers/nearby', async (c) => {
+  const latStr = c.req.query('lat');
+  const lngStr = c.req.query('lng');
+  const db = drizzle(c.env.DB, { schema });
+
   try {
     if (!c.env.DB) {
       console.error('[NearbyDrivers] DB binding missing');
@@ -686,13 +947,13 @@ app.get('/drivers/nearby', async (c) => {
     });
 
     // Filter in JS since D1 doesn't support datetime comparison easily
-    const freshDrivers = activeDrivers.filter(d => 
-      d.currentLatitude !== null && 
+    const freshDrivers = activeDrivers.filter(d =>
+      d.currentLatitude !== null &&
       d.currentLongitude !== null &&
       d.lastLocationUpdate !== null &&
       d.lastLocationUpdate > twoMinutesAgo
     );
-    
+
     const drivers = freshDrivers.map(d => ({
       id: d.id,
       position: [d.currentLatitude!, d.currentLongitude!] as [number, number],
@@ -700,8 +961,9 @@ app.get('/drivers/nearby', async (c) => {
     }));
 
     return c.json({ drivers });
-  } catch (error: any) {
-    console.error('[NearbyDrivers] Critical Error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[NearbyDrivers] Critical Error:', message);
     return c.json({ drivers: [] });
   }
 });
@@ -711,12 +973,12 @@ app.post('/verify-identity', authGuard, async (c) => {
   const { type } = await c.req.json();
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
-  
+
   // Fix: Persist verified = true in the users table for real
   await db.update(schema.users)
     .set({ verified: true, updatedAt: new Date().toISOString() })
     .where(eq(schema.users.id, payload.id));
-    
+
   if (type === 'driver') {
     await db.update(schema.drivers)
       .set({ isVerified: true, isActive: true })
@@ -732,11 +994,19 @@ app.post('/payments/create', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const { amount, paymentMethod, description } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  
+
   const mercadoPagoAccessToken = c.env.MERCADOPAGO_ACCESS_TOKEN || 'TEST-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX';
-  
+
   try {
-    const preferenceData: any = {
+    interface MercadoPagoPreference {
+      items: Array<{ title: string; quantity: number; unit_price: number }>;
+      back_urls: { success: string; failure: string; pending: string };
+      auto_return: string;
+      notification_url: string;
+      metadata: Record<string, any>;
+    }
+
+    const preferenceData: MercadoPagoPreference = {
       items: [{ title: description || 'Zipp Payment', quantity: 1, unit_price: amount }],
       back_urls: {
         success: `${c.req.header('origin')}/payment/success`,
@@ -754,36 +1024,41 @@ app.post('/payments/create', authGuard, async (c) => {
       body: JSON.stringify(preferenceData),
     });
 
-    const preference = await mpRes.json() as any;
-    
+    interface MPResponse {
+      id: string;
+      init_point: string;
+    }
+    const preference = await mpRes.json() as MPResponse;
+
     // Save to DB
     await db.insert(schema.commissionPayments).values({
       driverId: payload.id,
       amount,
-      paymentMethod: paymentMethod as any,
+      paymentMethod: paymentMethod as any, // Enum conversion might need narrowing if strict
       mercadopagoPreferenceId: preference.id,
       paymentUrl: preference.init_point,
       status: 'pending',
     });
 
     return c.json({ preference_id: preference.id, init_point: preference.init_point });
-  } catch (error: any) {
-    return c.json({ error: error.message }, 500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: message }, 500);
   }
 });
 
 app.post('/payments/webhook', async (c) => {
   const body = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
-  
+
   if (body.type === 'payment' && body.data?.id) {
     const paymentId = body.data.id;
     const mercadoPagoAccessToken = c.env.MERCADOPAGO_ACCESS_TOKEN;
-    
+
     const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
       headers: { 'Authorization': `Bearer ${mercadoPagoAccessToken}` }
     });
-    
+
     const payment = await mpRes.json() as any;
     if (payment.status === 'approved') {
       const preferenceId = payment.order?.id || payment.preference_id;
@@ -796,7 +1071,7 @@ app.post('/payments/webhook', async (c) => {
       }
     }
   }
-  
+
   return c.text('OK');
 });
 

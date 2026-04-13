@@ -1,5 +1,5 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
-import { sql } from 'drizzle-orm';
+import { sql, type InferSelectModel, type InferInsertModel } from 'drizzle-orm';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -10,9 +10,13 @@ export const users = sqliteTable('users', {
   profileImageUrl: text('profile_image_url'),
   passwordHash: text('password_hash'),
   verified: integer('verified', { mode: 'boolean' }).default(false),
+  pushSubscription: text('fcm_token'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 });
+
+export type User = InferSelectModel<typeof users>;
+export type NewUser = InferInsertModel<typeof users>;
 
 export const drivers = sqliteTable('drivers', {
   id: text('id').primaryKey().references(() => users.id),
@@ -39,12 +43,15 @@ export const drivers = sqliteTable('drivers', {
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 });
 
+export type Driver = InferSelectModel<typeof drivers>;
+export type NewDriver = InferInsertModel<typeof drivers>;
+
 export const rides = sqliteTable('rides', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   passengerId: text('passenger_id').notNull().references(() => users.id),
   driverId: text('driver_id').references(() => drivers.id),
   rideType: text('ride_type', { enum: ['ride', 'errand'] }).notNull().default('ride'),
-  status: text('status', { enum: ['requested', 'accepted', 'in_progress', 'completed', 'cancelled'] }).notNull().default('requested'),
+  status: text('status', { enum: ['requested', 'accepted', 'arrived', 'in_progress', 'completed', 'cancelled'] }).notNull().default('requested'),
   pickupLatitude: real('pickup_latitude').notNull(),
   pickupLongitude: real('pickup_longitude').notNull(),
   pickupAddress: text('pickup_address').notNull(),
@@ -67,6 +74,9 @@ export const rides = sqliteTable('rides', {
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
 });
 
+export type Ride = InferSelectModel<typeof rides>;
+export type NewRide = InferInsertModel<typeof rides>;
+
 export const commissionPayments = sqliteTable('commission_payments', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   driverId: text('driver_id').notNull().references(() => drivers.id),
@@ -81,6 +91,9 @@ export const commissionPayments = sqliteTable('commission_payments', {
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 });
 
+export type CommissionPayment = InferSelectModel<typeof commissionPayments>;
+export type NewCommissionPayment = InferInsertModel<typeof commissionPayments>;
+
 export const ratings = sqliteTable('ratings', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rideId: text('ride_id').notNull().references(() => rides.id),
@@ -90,6 +103,9 @@ export const ratings = sqliteTable('ratings', {
   comment: text('comment'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
 });
+
+export type Rating = InferSelectModel<typeof ratings>;
+export type NewRating = InferInsertModel<typeof ratings>;
 
 export const promotions = sqliteTable('promotions', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -104,6 +120,9 @@ export const promotions = sqliteTable('promotions', {
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
 });
 
+export type Promotion = InferSelectModel<typeof promotions>;
+export type NewPromotion = InferInsertModel<typeof promotions>;
+
 export const verificationCodes = sqliteTable('verification_codes', {
   id: integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }),
   phone: text('phone').notNull(),
@@ -112,3 +131,6 @@ export const verificationCodes = sqliteTable('verification_codes', {
   used: integer('used', { mode: 'boolean' }).default(false),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
 });
+
+export type VerificationCode = InferSelectModel<typeof verificationCodes>;
+export type NewVerificationCode = InferInsertModel<typeof verificationCodes>;

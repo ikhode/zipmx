@@ -29,6 +29,20 @@
       "when": 1775607720275,
       "tag": "0003_small_bromley",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1775775160193,
+      "tag": "0004_brief_santa_claus",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1776032438853,
+      "tag": "0005_concerned_shadow_king",
+      "breakpoints": true
     }
   ]
 }

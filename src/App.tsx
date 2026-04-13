@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import APIClient, { APIUser } from './lib/api';
+import APIClient, { APIUser, APIRide } from './lib/api';
 import { MapView } from './components/MapView';
 import { RideRequestSheet } from './components/RideRequestSheet';
 
@@ -19,6 +19,9 @@ import { useToast } from './components/ToastProvider';
 import { triggerHaptic } from './lib/haptics';
 import { useLocationTracker } from './hooks/useLocationTracker';
 import { LegalPage } from './components/Legal';
+import { auth } from './lib/firebase';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { requestPushPermission } from './lib/push';
 
 type AppMode = 'passenger' | 'driver';
 
@@ -80,6 +83,8 @@ export default function App() {
   // Refs to fix stale closures in watchPosition
   const planningStartedRef = useRef(planningStarted);
   const selectionModeRef = useRef(selectionMode);
+
+  // Permiso movido a interacciones de usuario (StartPlanning y SwitchMode) para cumplir políticas del browser
   
   useEffect(() => { planningStartedRef.current = planningStarted; }, [planningStarted]);
   useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
@@ -114,12 +119,33 @@ export default function App() {
   const [showVerificationSheet, setShowVerificationSheet] = useState<{ type: 'passenger' | 'driver' } | null>(null);
   const [showQuickAuth, setShowQuickAuth] = useState(false);
   const [showAuthSheet, setShowAuthSheet] = useState(false);
+  const [authReason, setAuthReason] = useState<string | undefined>();
   const [quickAuthType, setQuickAuthType] = useState<'passenger' | 'driver'>('passenger');
   const [flyToTrigger, setFlyToTrigger] = useState(0);
   const [driverIsOnline, setDriverIsOnline] = useState(false);
   const [showLegal, setShowLegal] = useState<string | null>(null);
+  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const lastSelectionMode = React.useRef<SelectionType>('none');
-  
+   
+   // Polling for active ride
+   useEffect(() => {
+     if (!session) return;
+     const poll = async () => {
+       try {
+         const ride = mode === 'driver' 
+           ? await APIClient.getActiveRide()
+           : await APIClient.getMyActiveRide();
+         setActiveRide(ride);
+         setHasActiveRide(!!ride);
+       } catch (err) {
+         console.error('[App] Active ride polling error:', err);
+       }
+     };
+     poll();
+     const interval = setInterval(poll, 5000);
+     return () => clearInterval(interval);
+   }, [session, mode]);
+
   // Real-time Tracker
   const { nearbyDrivers: realTimeDrivers, updateLocation } = useLocationTracker(
     mode, 
@@ -127,8 +153,20 @@ export default function App() {
     mode === 'driver' && driverIsOnline
   );
 
-  const onLoginRequired = (type: 'passenger' | 'driver') => {
+   // Compute focused driver position for passengers
+   const activeRideDriverLocation = useMemo(() => {
+     if (mode === 'passenger' && activeRide?.driverId) {
+       const driver = realTimeDrivers.find(d => d.id === activeRide.driverId);
+       if (driver?.currentLatitude && driver?.currentLongitude) {
+         return [driver.currentLatitude, driver.currentLongitude] as [number, number];
+       }
+     }
+     return null;
+   }, [mode, activeRide, realTimeDrivers]);
+
+  const onLoginRequired = (type: 'passenger' | 'driver', reason?: string) => {
     setQuickAuthType(type);
+    setAuthReason(reason);
     setShowAuthSheet(true);
     triggerHaptic('medium');
   };
@@ -195,10 +233,8 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // --- Hash Based Routing ---
   useEffect(() => {
-    APIClient.getProfile().then(user => setSession(user ? { user } : null));
-
-    // --- Hash Based Routing ---
     const handleHashSync = () => {
       const hash = window.location.hash;
       if (hash === '#/profile') {
@@ -222,6 +258,34 @@ export default function App() {
         window.removeEventListener('popstate', handleHashSync);
     };
   }, [handleOpenAuth]);
+
+  // --- Firebase Auth & Session Sync ---
+  useEffect(() => {
+    // Import type User from firebase/auth
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          // Sync with backend using the ID token
+          const idToken = await firebaseUser.getIdToken();
+          // We use verifyOTP endpoint as a generic "sync" point if needed, 
+          // or a dedicated profile fetch that handles new users.
+          const user = await APIClient.verifyOTP(firebaseUser.phoneNumber || 'anonymous', idToken);
+          setSession({ user: user.user });
+        } catch (error) {
+          console.error('[SessionSync] Error:', error);
+        }
+      } else {
+        // No user? Sign in anonymously to ensure identity persists
+        try {
+          await signInAnonymously(auth);
+        } catch (error) {
+          console.error('[Auth] Anonymous SignIn failed:', error);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // Handle Splash Screen
   useEffect(() => {
@@ -268,53 +332,57 @@ export default function App() {
       return a === b;
     };
 
-    if (selectionMode !== 'none') {
-      const modeChanged = !isSameMode(lastSelectionMode.current, selectionMode);
-      
-      // Reset interaction flag on mode change
-      if (modeChanged) {
-        userInteractedRef.current = false;
+      if (selectionMode !== 'none') {
+        const modeChanged = !isSameMode(lastSelectionMode.current, selectionMode);
+        
+        // Reset interaction flag and state on mode change
+        if (modeChanged) {
+          userInteractedRef.current = false;
+          selectionHasRealLocation.current = false;
+          lastSelectionMode.current = selectionMode;
+        }
+        
+        // We only initialize/auto-follow if the user hasn't interacted manually 
+        // OR we don't have a real location to show yet.
+        const shouldInitialize = modeChanged || (!userInteractedRef.current && !selectionHasRealLocation.current);
+
+        if (shouldInitialize) {
+          let initial: [number, number] | null = null;
+          let initialAddr = 'Buscando dirección...';
+
+          if (selectionMode === 'pickup') {
+            initial = userLocation || pickupLocation;
+            initialAddr = pickupAddress || 'Mi ubicación';
+          } else if (selectionMode === 'dropoff') {
+            initial = dropoffLocation || userLocation || pickupLocation;
+            initialAddr = dropoffAddress || '¿A dónde vas?';
+          } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
+            initial = stops[selectionMode.index]?.position || userLocation || pickupLocation;
+            initialAddr = stops[selectionMode.index]?.address || 'Nueva parada';
+          }
+
+          if (initial) {
+            selectionHasRealLocation.current = true;
+            const loc: [number, number] = initial;
+            setTempLocation(loc);
+            setTempAddress(initialAddr);
+            setSelectionInitialLocation(loc);
+            setFlyToTrigger(prev => prev + 1);
+          } else {
+            // Fallback to default if absolutely nothing is available yet
+            setTempLocation(DEFAULT_LOCATION);
+            setTempAddress('Buscando dirección...');
+          }
+        }
+      } else {
+        lastSelectionMode.current = 'none';
         selectionHasRealLocation.current = false;
+        userInteractedRef.current = false;
+        setSelectionInitialLocation(null);
+        setTempLocation(null);
+        setTempAddress('Buscando dirección...');
       }
-      
-      // If user interacted manually, WE DO NOT AUTO-FOLLOW anymore for this session
-      if (userInteractedRef.current && selectionHasRealLocation.current) return;
-
-      lastSelectionMode.current = selectionMode;
-
-      let initial: [number, number] | null = null;
-      let initialAddr = 'Buscando dirección...';
-
-      if (selectionMode === 'pickup') {
-        initial = userLocation || pickupLocation;
-        initialAddr = pickupAddress || 'Mi ubicación';
-      } else if (selectionMode === 'dropoff') {
-        initial = dropoffLocation || userLocation || pickupLocation;
-        initialAddr = dropoffAddress || '¿A dónde vas?';
-      } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
-        initial = stops[selectionMode.index]?.position || userLocation || pickupLocation;
-        initialAddr = stops[selectionMode.index]?.address || 'Nueva parada';
-      }
-
-      // If we got a real location from state (not using the fallback), mark as real
-      if (initial) {
-        selectionHasRealLocation.current = true;
-      }
-
-      const loc: [number, number] = initial || DEFAULT_LOCATION;
-      setTempLocation(loc);
-      setTempAddress(initialAddr);
-      setSelectionInitialLocation(loc);
-      setFlyToTrigger(prev => prev + 1);
-    } else {
-      lastSelectionMode.current = 'none';
-      selectionHasRealLocation.current = false;
-      userInteractedRef.current = false;
-      setSelectionInitialLocation(null);
-      setTempLocation(null);
-      setTempAddress('Buscando dirección...');
-    }
-  }, [selectionMode, pickupLocation, dropoffLocation, userLocation, pickupAddress, dropoffAddress, stops]);
+    }, [selectionMode, pickupLocation, dropoffLocation, userLocation, pickupAddress, dropoffAddress, stops]);
 
 
   // Debounced geocoding for temp selection
@@ -356,6 +424,7 @@ export default function App() {
   const handleStartPlanning = useCallback((_field?: 'pickup' | 'dropoff') => {
     triggerHaptic('light');
     setPlanningStarted(true);
+    requestPushPermission().catch(console.error);
   }, []);
   const handleSelectService = useCallback((type: 'ride' | 'errand' | 'taxi' | 'mototaxi') => {
     triggerHaptic('medium');
@@ -428,12 +497,29 @@ export default function App() {
           setMode('driver');
           setPlanningStarted(false);
           setShowAccountMenu(false);
+          requestPushPermission().catch(console.error);
        }
     } else {
        setMode('passenger');
        setShowAccountMenu(false);
     }
   }, [hasActiveRide, mode, session, showToast]);
+
+  const computedPickup = useMemo<[number, number] | undefined>(() => {
+    return pickupLocation || (activeRide ? [activeRide.pickupLatitude, activeRide.pickupLongitude] : undefined);
+  }, [pickupLocation, activeRide?.pickupLatitude, activeRide?.pickupLongitude]);
+
+  const computedDropoff = useMemo<[number, number] | undefined>(() => {
+    return dropoffLocation || (activeRide ? [activeRide.dropoffLatitude, activeRide.dropoffLongitude] : undefined);
+  }, [dropoffLocation, activeRide?.dropoffLatitude, activeRide?.dropoffLongitude]);
+
+  const computedStops = useMemo<[number, number][]>(() => {
+    return stops.map(s => s.position);
+  }, [stops]);
+
+  const computedDriverLoc = useMemo<[number, number] | undefined>(() => {
+    return mode === 'driver' ? (userLocation || undefined) : (activeRideDriverLocation || undefined);
+  }, [mode, userLocation, activeRideDriverLocation]);
 
   return (
     <div className={`app-container ${mode === 'passenger' && !pickupLocation && !dropoffLocation && selectionMode === 'none' ? 'is-home' : ''}`}>
@@ -442,9 +528,10 @@ export default function App() {
         <MapView 
           center={mapCenter}
           zoom={15}
-          pickupLocation={pickupLocation || undefined}
-          dropoffLocation={dropoffLocation || undefined}
-          stops={stops.map(s => s.position)}
+          pickupLocation={computedPickup}
+          dropoffLocation={computedDropoff}
+          driverLocation={computedDriverLoc}
+          stops={computedStops}
           selectingLocation={selectionMode !== 'none'}
           onLocationSelected={(loc) => setTempLocation(loc)}
           onMapInteraction={handleMapInteraction}
@@ -456,7 +543,7 @@ export default function App() {
       {selectionMode === 'none' && (
         <div className={`zipp-premium-header ${isHeaderHidden ? 'hidden' : ''} mode-${mode}`}>
           <div className="zipp-header-left stagger-in">
-            <span className="zipp-logo-text">ZIPP</span>
+            <span className="zipp-logo-text">Zipp</span>
           </div>
           <div className="zipp-header-right stagger-in">
             {!session ? (
@@ -498,18 +585,19 @@ export default function App() {
         />
       )}
 
-       {selectionMode === 'none' && (
+      {selectionMode === 'none' && (
         <div className={`scroll-content experience-${mode}`}>
           {mode === 'passenger' ? (
             !planningStarted && !hasActiveRide ? (
-              <div className="home-content" style={{ pointerEvents: 'auto' }}>
+              <div className="home-content" style={{ pointerEvents: 'auto', display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                 <PassengerHome 
                   dropoffAddress={dropoffAddress}
                   onStartPlanning={handleStartPlanning}
                   onSelectService={handleSelectService}
                   onPromoClick={handlePromoClick}
                 />
-                <div className="home-map-preview-placeholder"></div>
+                {/* Contenedor en blanco para extender el diseño sobre el mapa y añadir widgets a futuro */}
+                <div style={{ flex: 1, backgroundColor: 'var(--bg-main, #ffffff)', minHeight: '35vh' }}></div>
               </div>
             ) : (
               <>
@@ -521,7 +609,6 @@ export default function App() {
                        <button className="interactive-scale" onClick={() => { triggerHaptic('medium'); setShowAuthSheet(true); }}>INICIAR SESIÓN</button>
                     </div>
                   )}
-                  
                   <RideRequestSheet
                     session={session}
                     initialPlanning={planningStarted}
@@ -540,23 +627,32 @@ export default function App() {
                     onLoginRequired={() => onLoginRequired('passenger')}
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
                     onHeaderVisibilityChange={setIsHeaderHidden}
-                    onActiveRideChange={setHasActiveRide}
+                    onActiveRideChange={(active) => {
+                      setHasActiveRide(active);
+                      if (!active) setActiveRide(null);
+                    }}
                     userLocation={userLocation}
                     geoLoading={geoLoading}
                     onUseMyLocation={handleUseMyLocation}
+                    activeRideOverride={activeRide || undefined}
                   />
                 </div>
               </>
             )
           ) : (
-             <div className="driver-focused-view">
-               <DriverModeSheet 
-                 session={session} 
-                 onActiveRideChange={setHasActiveRide} 
-                 onLoginRequired={() => onLoginRequired('driver')}
-                 onOnlineChange={setDriverIsOnline}
-               />
-             </div>
+             <>
+               <div className="scroll-spacer" style={{ height: hasActiveRide ? '65vh' : '40vh', transition: 'height 0.6s cubic-bezier(0.4, 0, 0.2, 1)' }}></div>
+               <div className="scroll-card">
+                 <DriverModeSheet 
+                   session={session} 
+                   onActiveRideChange={setHasActiveRide} 
+                   onLoginRequired={() => onLoginRequired('driver')}
+                   onOnlineChange={setDriverIsOnline}
+                   onUserUpdate={(user) => setSession({ user })}
+                   activeRideOverride={activeRide || undefined}
+                 />
+               </div>
+             </>
           )}
         </div>
       )}
@@ -666,9 +762,9 @@ export default function App() {
           initialSnap={0}
         >
           <Auth 
-            onSuccess={(user) => { setSession({ user }); setShowAuthSheet(false); }}
-            onClose={() => setShowAuthSheet(false)}
+            onSuccess={(user) => { setSession({ user }); setShowAuthSheet(false); setAuthReason(undefined); }}
             initialMode={quickAuthType}
+            reason={authReason}
           />
         </BottomSheet>
       )}

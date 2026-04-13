@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useToast } from './ToastProvider';
 
 interface MapViewProps {
   center?: [number, number];
   zoom?: number;
-  pickupLocation?: [number, number];
-  dropoffLocation?: [number, number];
+  pickupLocation?: [number, number] | null;
+  dropoffLocation?: [number, number] | null;
+  driverLocation?: [number, number] | null;
   stops?: [number, number][];
   selectingLocation?: boolean;
   onLocationSelected?: (loc: [number, number]) => void;
@@ -21,6 +23,7 @@ export function MapView({
   zoom = 13,
   pickupLocation,
   dropoffLocation,
+  driverLocation,
   stops = [],
   selectingLocation = false,
   onLocationSelected,
@@ -28,6 +31,7 @@ export function MapView({
   nearbyDrivers = [],
   flyToTrigger = 0,
 }: MapViewProps) {
+  const { showToast } = useToast();
   const [isDragging, setIsDragging] = useState(false);
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,7 +62,8 @@ export function MapView({
     }).setView(center, zoom);
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; CARTO'
+      attribution: '&copy; CARTO',
+      crossOrigin: true
     }).addTo(map);
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -120,8 +125,8 @@ export function MapView({
         marker = L.marker(driver.position, {
           icon: L.icon({
             iconUrl: driver.type === 'moto' 
-              ? 'https://zipp.inteligent.software/icons/mototaxi_3d_icon_1775323676892.png' 
-              : 'https://zipp.inteligent.software/icons/taxi_3d_icon_1775323650355.png',
+              ? '/icons/mototaxi_3d_icon_1775323676892.png' 
+              : '/icons/taxi_3d_icon_1775323650355.png',
             iconSize: [40, 40],
             iconAnchor: [20, 20]
           }),
@@ -244,6 +249,79 @@ export function MapView({
     }
   }, [pickupLocation, dropoffLocation]);
 
+  const driverMarkerRef = useRef<L.Marker | null>(null);
+  const lastFocusTypeRef = useRef<string>('');
+
+  // Driver Marker Layer
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    if (driverLocation) {
+      if (!driverMarkerRef.current) {
+        const taxiIcon = L.icon({
+          iconUrl: '/icons/taxi_3d_icon_1775323650355.png',
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+        });
+        driverMarkerRef.current = L.marker(driverLocation, { icon: taxiIcon }).addTo(mapRef.current);
+      } else {
+        driverMarkerRef.current.setLatLng(driverLocation);
+      }
+    } else if (driverMarkerRef.current) {
+      driverMarkerRef.current.remove();
+      driverMarkerRef.current = null;
+    }
+  }, [driverLocation]);
+
+  // Auto-Focus Intelligence (Optimized to prevent infinite loops)
+  useEffect(() => {
+    if (!mapRef.current || selectingLocation) return;
+    
+    // Determine the current "Focus Context"
+    const hasDriver = !!driverLocation;
+    const hasPickup = !!pickupLocation;
+    const hasDropoff = !!dropoffLocation;
+    const numStops = stops?.length || 0;
+
+    // We create a unique key for this "phase" of the ride
+    const currentFocusType = `${hasDriver}:${hasPickup}:${hasDropoff}:${numStops}`;
+    
+    // CRITICAL: If the phase hasn't changed, we don't trigger auto-focus.
+    // This prevents the map from re-zooming every time the driver moves.
+    if (currentFocusType === lastFocusTypeRef.current) return;
+    
+    // If everything is gone, reset and return
+    if (!hasDriver && !hasPickup && !hasDropoff) {
+      lastFocusTypeRef.current = '';
+      return;
+    }
+
+    lastFocusTypeRef.current = currentFocusType;
+    const targets: L.LatLngExpression[] = [];
+    const map = mapRef.current;
+    
+    if (driverLocation) {
+      targets.push(driverLocation);
+      if (pickupLocation) targets.push(pickupLocation);
+      else if (dropoffLocation) targets.push(dropoffLocation);
+    } else if (pickupLocation && dropoffLocation) {
+      targets.push(pickupLocation);
+      targets.push(dropoffLocation);
+      if (stops?.length) stops.forEach(s => targets.push(s));
+    }
+
+    if (targets.length >= 2) {
+       const bounds = L.latLngBounds(targets);
+       map.fitBounds(bounds, { 
+         padding: [80, 80],
+         maxZoom: 16,
+         animate: true
+       });
+    } else if (targets.length === 1) {
+       map.setView(targets[0], 16, { animate: true });
+    }
+  }, [driverLocation, pickupLocation, dropoffLocation, stops, selectingLocation]);
+
   // Route Lifecycle: Update routing and polylines
   useEffect(() => {
     if (!mapRef.current) return;
@@ -274,25 +352,24 @@ export function MapView({
         const controller = new AbortController();
         routeAbortControllerRef.current = controller;
 
-        const url = `/api/routing/route?coords=${coords}`;
+        const proxyUrl = `/api/routing/route?coords=${coords}`;
 
         const fetchRoute = (attempt = 1) => {
           if (controller.signal.aborted) return;
 
-          fetch(url, { signal: controller.signal })
+          fetch(proxyUrl, { signal: controller.signal })
             .then(async res => {
-              const contentType = res.headers.get('content-type');
-              if (!res.ok || !contentType || !contentType.includes('application/json')) {
-                const text = await res.text();
-                throw new Error(`Status ${res.status}: ${text.substring(0, 50)}`);
+              if (!res.ok) throw new Error(`Proxy Status ${res.status}`);
+              const data = await res.json();
+              if (data.code?.toLowerCase() !== 'ok' || !data.routes?.[0]?.geometry?.coordinates) {
+                throw new Error(`Invalid data from proxy`);
               }
-              return res.json();
+              return data;
             })
-            .then(data => {
+            .then((data: any) => {
               if (controller.signal.aborted || !mapRef.current) return;
 
-              if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates) {
-                const roadPoints = data.routes[0].geometry.coordinates.map((p: [number, number]) => [p[1], p[0]] as [number, number]);
+              const roadPoints = data.routes[0].geometry.coordinates.map((p: [number, number]) => [p[1], p[0]] as [number, number]);
                 
                 const bounds = L.latLngBounds([pickupLocation!, ...stops, dropoffLocation!]);
 
@@ -310,15 +387,15 @@ export function MapView({
                   lineJoin: 'round',
                 }).addTo(mapRef.current);
 
-                routeDashRef.current = L.polyline(roadPoints, {
-                  color: '#FFFFFF',
-                  weight: 2,
-                  dashArray: '8, 12',
-                  opacity: 0.7,
-                }).addTo(mapRef.current);
-              }
+              routeDashRef.current = L.polyline(roadPoints, {
+                color: '#FFFFFF',
+                weight: 2,
+                dashArray: '8, 12',
+                opacity: 0.7,
+                className: 'route-line-pulse'
+              }).addTo(mapRef.current);
             })
-            .catch(err => {
+            .catch((err: any) => {
               if (err.name === 'AbortError') return;
               if (attempt < 2 && !controller.signal.aborted) {
                 console.log(`Routing fetch failed, retrying in 2s...`);
@@ -327,8 +404,23 @@ export function MapView({
                   fetchRoute(attempt + 1);
                 }, 2000);
               } else {
-
                 console.warn("Routing Error after retry:", err.message);
+                
+                // --- FALLBACK VISUAL ---
+                if (!mapRef.current) return;
+                
+                // Draw a straight dotted line as fallback
+                const fallbackPoints = [pickupLocation!, ...stops, dropoffLocation!];
+                
+                routeLineRef.current = L.polyline(fallbackPoints, {
+                  color: '#00D1FF',
+                  weight: 4,
+                  opacity: 0.8,
+                  dashArray: '10, 15',
+                  lineJoin: 'round',
+                }).addTo(mapRef.current);
+
+                showToast("Routing servers are currently unavailable or timed out.", "info");
               }
             });
         };
