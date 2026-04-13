@@ -332,53 +332,57 @@ export default function App() {
       return a === b;
     };
 
-    if (selectionMode !== 'none') {
-      const modeChanged = !isSameMode(lastSelectionMode.current, selectionMode);
-      
-      // Reset interaction flag on mode change
-      if (modeChanged) {
-        userInteractedRef.current = false;
+      if (selectionMode !== 'none') {
+        const modeChanged = !isSameMode(lastSelectionMode.current, selectionMode);
+        
+        // Reset interaction flag and state on mode change
+        if (modeChanged) {
+          userInteractedRef.current = false;
+          selectionHasRealLocation.current = false;
+          lastSelectionMode.current = selectionMode;
+        }
+        
+        // We only initialize/auto-follow if the user hasn't interacted manually 
+        // OR we don't have a real location to show yet.
+        const shouldInitialize = modeChanged || (!userInteractedRef.current && !selectionHasRealLocation.current);
+
+        if (shouldInitialize) {
+          let initial: [number, number] | null = null;
+          let initialAddr = 'Buscando dirección...';
+
+          if (selectionMode === 'pickup') {
+            initial = userLocation || pickupLocation;
+            initialAddr = pickupAddress || 'Mi ubicación';
+          } else if (selectionMode === 'dropoff') {
+            initial = dropoffLocation || userLocation || pickupLocation;
+            initialAddr = dropoffAddress || '¿A dónde vas?';
+          } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
+            initial = stops[selectionMode.index]?.position || userLocation || pickupLocation;
+            initialAddr = stops[selectionMode.index]?.address || 'Nueva parada';
+          }
+
+          if (initial) {
+            selectionHasRealLocation.current = true;
+            const loc: [number, number] = initial;
+            setTempLocation(loc);
+            setTempAddress(initialAddr);
+            setSelectionInitialLocation(loc);
+            setFlyToTrigger(prev => prev + 1);
+          } else {
+            // Fallback to default if absolutely nothing is available yet
+            setTempLocation(DEFAULT_LOCATION);
+            setTempAddress('Buscando dirección...');
+          }
+        }
+      } else {
+        lastSelectionMode.current = 'none';
         selectionHasRealLocation.current = false;
+        userInteractedRef.current = false;
+        setSelectionInitialLocation(null);
+        setTempLocation(null);
+        setTempAddress('Buscando dirección...');
       }
-      
-      // If user interacted manually, WE DO NOT AUTO-FOLLOW anymore for this session
-      if (userInteractedRef.current && selectionHasRealLocation.current) return;
-
-      lastSelectionMode.current = selectionMode;
-
-      let initial: [number, number] | null = null;
-      let initialAddr = 'Buscando dirección...';
-
-      if (selectionMode === 'pickup') {
-        initial = userLocation || pickupLocation;
-        initialAddr = pickupAddress || 'Mi ubicación';
-      } else if (selectionMode === 'dropoff') {
-        initial = dropoffLocation || userLocation || pickupLocation;
-        initialAddr = dropoffAddress || '¿A dónde vas?';
-      } else if (typeof selectionMode === 'object' && selectionMode.type === 'stop') {
-        initial = stops[selectionMode.index]?.position || userLocation || pickupLocation;
-        initialAddr = stops[selectionMode.index]?.address || 'Nueva parada';
-      }
-
-      // If we got a real location from state (not using the fallback), mark as real
-      if (initial) {
-        selectionHasRealLocation.current = true;
-      }
-
-      const loc: [number, number] = initial || DEFAULT_LOCATION;
-      setTempLocation(loc);
-      setTempAddress(initialAddr);
-      setSelectionInitialLocation(loc);
-      setFlyToTrigger(prev => prev + 1);
-    } else {
-      lastSelectionMode.current = 'none';
-      selectionHasRealLocation.current = false;
-      userInteractedRef.current = false;
-      setSelectionInitialLocation(null);
-      setTempLocation(null);
-      setTempAddress('Buscando dirección...');
-    }
-  }, [selectionMode, pickupLocation, dropoffLocation, userLocation, pickupAddress, dropoffAddress, stops]);
+    }, [selectionMode, pickupLocation, dropoffLocation, userLocation, pickupAddress, dropoffAddress, stops]);
 
 
   // Debounced geocoding for temp selection
@@ -623,7 +627,10 @@ export default function App() {
                     onLoginRequired={() => onLoginRequired('passenger')}
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
                     onHeaderVisibilityChange={setIsHeaderHidden}
-                    onActiveRideChange={setHasActiveRide}
+                    onActiveRideChange={(active) => {
+                      setHasActiveRide(active);
+                      if (!active) setActiveRide(null);
+                    }}
                     userLocation={userLocation}
                     geoLoading={geoLoading}
                     onUseMyLocation={handleUseMyLocation}

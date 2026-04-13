@@ -352,25 +352,40 @@ export function MapView({
         const controller = new AbortController();
         routeAbortControllerRef.current = controller;
 
-        const url = `/api/routing/route?coords=${coords}`;
+        // Race multiple public OSRM servers + our own local API proxy
+        const urls = [
+          `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+          `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+          `/api/routing/route?coords=${coords}`
+        ];
 
         const fetchRoute = (attempt = 1) => {
           if (controller.signal.aborted) return;
 
-          fetch(url, { signal: controller.signal })
-            .then(async res => {
-              const contentType = res.headers.get('content-type');
-              if (!res.ok || !contentType || !contentType.includes('application/json')) {
-                const text = await res.text();
-                throw new Error(`Status ${res.status}: ${text.substring(0, 50)}`);
-              }
-              return res.json();
-            })
-            .then(data => {
+          const fetchPromises = urls.map(url => 
+            fetch(url, { signal: controller.signal })
+              .then(async res => {
+                const contentType = res.headers.get('content-type');
+                if (!res.ok || !contentType || !contentType.includes('application/json')) {
+                  throw new Error(`Status ${res.status}`);
+                }
+                const data = await res.json();
+                if (data.code?.toLowerCase() !== 'ok' || !data.routes?.[0]?.geometry?.coordinates) {
+                  throw new Error(`Invalid data`);
+                }
+                return data;
+              })
+              .catch(err => {
+                console.error(`Fetch to ${url} failed:`, err.message);
+                throw err;
+              })
+          );
+
+          Promise.any(fetchPromises)
+            .then((data: any) => {
               if (controller.signal.aborted || !mapRef.current) return;
 
-              if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates) {
-                const roadPoints = data.routes[0].geometry.coordinates.map((p: [number, number]) => [p[1], p[0]] as [number, number]);
+              const roadPoints = data.routes[0].geometry.coordinates.map((p: [number, number]) => [p[1], p[0]] as [number, number]);
                 
                 const bounds = L.latLngBounds([pickupLocation!, ...stops, dropoffLocation!]);
 
@@ -388,15 +403,14 @@ export function MapView({
                   lineJoin: 'round',
                 }).addTo(mapRef.current);
 
-                routeDashRef.current = L.polyline(roadPoints, {
-                  color: '#FFFFFF',
-                  weight: 2,
-                  dashArray: '8, 12',
-                  opacity: 0.7,
-                }).addTo(mapRef.current);
-              }
+              routeDashRef.current = L.polyline(roadPoints, {
+                color: '#FFFFFF',
+                weight: 2,
+                dashArray: '8, 12',
+                opacity: 0.7,
+              }).addTo(mapRef.current);
             })
-            .catch(err => {
+            .catch((err: any) => {
               if (err.name === 'AbortError') return;
               if (attempt < 2 && !controller.signal.aborted) {
                 console.log(`Routing fetch failed, retrying in 2s...`);
@@ -414,10 +428,10 @@ export function MapView({
                 const fallbackPoints = [pickupLocation!, ...stops, dropoffLocation!];
                 
                 routeLineRef.current = L.polyline(fallbackPoints, {
-                  color: '#94a3b8', // Gray slate
-                  weight: 3,
-                  opacity: 0.6,
-                  dashArray: '10, 10',
+                  color: '#00D1FF',
+                  weight: 4,
+                  opacity: 0.8,
+                  dashArray: '10, 15',
                   lineJoin: 'round',
                 }).addTo(mapRef.current);
 

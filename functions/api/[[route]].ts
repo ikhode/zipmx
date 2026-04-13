@@ -269,7 +269,7 @@ app.get('/routing/route', async (c) => {
         .then(async res => {
           if (!res.ok) throw new Error(`Status ${res.status}`);
           const data = await res.json() as OSRMResponse;
-          if (data.code !== 'Ok') throw new Error(`OSRM Error: ${data.code}`);
+          if (data.code?.toLowerCase() !== 'ok') throw new Error(`OSRM Error: ${data.code}`);
           return data;
         })
     );
@@ -564,7 +564,8 @@ app.get('/rides/my-active', authGuard, async (c) => {
     where: and(
       eq(schema.rides.passengerId, payload.id),
       inArray(schema.rides.status, ['requested', 'accepted', 'arrived', 'in_progress'])
-    )
+    ),
+    orderBy: [desc(schema.rides.createdAt)]
   });
   return c.json(activeRide || null);
 });
@@ -574,6 +575,14 @@ app.post('/rides/request', authGuard, async (c) => {
   const { pickup, dropoff, type, price, distance, duration, description, items } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
   try {
+    // Clear any previous stuck rides for this passenger
+    await db.update(schema.rides)
+      .set({ status: 'cancelled', cancelledAt: new Date().toISOString() })
+      .where(and(
+        eq(schema.rides.passengerId, payload.id),
+        inArray(schema.rides.status, ['requested', 'accepted', 'arrived', 'in_progress'])
+      ));
+
     const newRide = await db.insert(schema.rides).values({
       passengerId: payload.id,
       pickupLatitude: pickup.lat,

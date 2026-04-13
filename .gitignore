@@ -46,4 +46,7 @@ yarn-error.log*
 *-shm
 
 # Cloudflare Pages / Workers
-.cloudflare/
+# Agents & IDEs configs
+.antigravity/
+.windsurf/
+.agents/
