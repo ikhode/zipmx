@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql, type InferSelectModel, type InferInsertModel } from 'drizzle-orm';
 
 export const users = sqliteTable('users', {
@@ -102,10 +102,21 @@ export const ratings = sqliteTable('ratings', {
   rating: integer('rating').notNull(),
   comment: text('comment'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
+}, (table) => ({
+  rideRaterRatedUnique: uniqueIndex('ratings_ride_rater_rated_unique').on(table.rideId, table.raterId, table.ratedId)
+}));
+
+export const ratingSummary = sqliteTable('rating_summary', {
+  userId: text('user_id').primaryKey().references(() => users.id),
+  averageRating: real('average_rating').default(5.0),
+  totalRatings: integer('total_ratings').default(0),
+  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 });
 
 export type Rating = InferSelectModel<typeof ratings>;
 export type NewRating = InferInsertModel<typeof ratings>;
+export type RatingSummary = InferSelectModel<typeof ratingSummary>;
+export type NewRatingSummary = InferInsertModel<typeof ratingSummary>;
 
 export const promotions = sqliteTable('promotions', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import APIClient, { APIUser, APIRide } from '../lib/api';
+import APIClient, { APIUser, APIRide, DriverPublicInfo } from '../lib/api';
 import { searchAddresses, formatAddress, GeocodingResult } from '../lib/geocoding';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
@@ -82,18 +82,26 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
   const [searchText, setSearchText] = useState('');
   const [step, setStep] = useState<'service' | 'selection' | 'tracking'>('service');
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  const [driverInfo, setDriverInfo] = useState<DriverPublicInfo | null>(null);
   const prevRideStatusRef = useRef<string | null>(null);
   
   useEffect(() => {
     if (activeRide) {
       if (prevRideStatusRef.current !== activeRide.status) {
-         if (activeRide.status === 'accepted') playSuccessSound();
+         if (activeRide.status === 'accepted') {
+           playSuccessSound();
+           // Fetch real driver info as soon as the ride is accepted
+           APIClient.getRideDetails(activeRide.id)
+             .then(details => { if (details.driverInfo) setDriverInfo(details.driverInfo); })
+             .catch(console.error);
+         }
          if (activeRide.status === 'arrived') playNotificationSound();
          if (activeRide.status === 'completed') playSuccessSound();
       }
       prevRideStatusRef.current = activeRide.status;
     } else {
       prevRideStatusRef.current = null;
+      setDriverInfo(null);
     }
     onActiveRideChange?.(!!activeRide);
   }, [activeRide, onActiveRideChange]);
@@ -325,11 +333,11 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
                   </div>
                   <div className="driver-detail-premium">
                      <div className="driver-name-text" style={{ fontSize: '22px' }}>
-                        Juan G.
+                        {driverInfo?.fullName?.split(' ')[0] || 'Conductor'}
                      </div>
                      <div className="driver-rating-mini" style={{ fontSize: '14px', marginTop: '4px' }}>
-                        <span>⭐ 4.9</span>
-                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>• 1,240 viajes</span>
+                        <span>⭐ {driverInfo ? driverInfo.rating.toFixed(1) : '—'}</span>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>• {driverInfo ? `${driverInfo.totalTrips.toLocaleString()} viajes` : 'Cargando...'}</span>
                      </div>
                   </div>
                   <div className="driver-action-mini">
@@ -341,10 +349,16 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
              {activeRide.status !== 'requested' && (
                <div className="vehicle-badge-premium fade-in" style={{ marginTop: '24px', background: 'linear-gradient(135deg, #111827 0%, #1F2937 100%)', padding: '16px 20px' }}>
                   <div className="v-brand-plate">
-                     <span className="v-plate-text" style={{ fontSize: '16px' }}>ZIP 123</span>
-                     <span className="v-model-text" style={{ fontSize: '12px', color: '#9CA3AF' }}>Toyota Corolla • Blanco</span>
+                     <span className="v-plate-text" style={{ fontSize: '16px' }}>
+                       {driverInfo?.licensePlate || '———'}
+                     </span>
+                     <span className="v-model-text" style={{ fontSize: '12px', color: '#9CA3AF' }}>
+                       {driverInfo ? `${driverInfo.vehicleBrand} ${driverInfo.vehicleModel} ${driverInfo.vehicleYear}` : 'Cargando datos...'}
+                     </span>
                   </div>
-                  <div className="v-icon-m" style={{ fontSize: '32px' }}>🚗</div>
+                  <div className="v-icon-m" style={{ fontSize: '32px' }}>
+                    {driverInfo?.vehicleType === 'motorcycle' ? '🏍️' : driverInfo?.vehicleType === 'taxi' ? '🚕' : driverInfo?.vehicleType === 'rickshaw' ? '🛺' : '🚗'}
+                  </div>
                </div>
              )}
           </div>

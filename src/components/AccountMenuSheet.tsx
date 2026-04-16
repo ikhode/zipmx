@@ -13,7 +13,7 @@ interface AccountMenuSheetProps {
   onUserUpdate?: (user: any) => void;
 }
 
-type ViewType = 'menu' | 'wallet' | 'trips' | 'help' | 'settings' | 'zipp-pro' | 'safety';
+type ViewType = 'menu' | 'wallet' | 'trips' | 'help' | 'settings' | 'zipp-pro' | 'safety' | 'ratings-details';
 
 const renderSubViewHeader = (title: string, onBack: () => void) => (
   <div className="sub-view-header" style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
@@ -539,6 +539,57 @@ const SafetyView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
   </div>
 );
 
+const RatingsDetailsView: React.FC<{ onBack: () => void, userId: string }> = ({ onBack, userId }) => {
+  const [ratings, setRatings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    APIClient.getUserRatings(userId).then(setRatings).finally(() => setLoading(false));
+  }, [userId]);
+
+  return (
+    <div className="ratings-details-view fade-in">
+      {renderSubViewHeader('Tus Calificaciones', onBack)}
+      
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {loading ? (
+          <div className="skeleton-loader" style={{ height: '200px', borderRadius: '24px' }}></div>
+        ) : ratings.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px 20px', opacity: 0.5 }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>⭐</div>
+            <p style={{ fontWeight: 700 }}>Aún no tienes calificaciones</p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {ratings.map((r, i) => (
+              <div key={r.id} className="glass-v2-card stagger-in" style={{ padding: '20px', animationDelay: `${i * 0.05}s` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[...Array(5)].map((_, idx) => (
+                      <span key={idx} style={{ fontSize: '14px', filter: idx < r.rating ? 'none' : 'grayscale(1)', opacity: idx < r.rating ? 1 : 0.2 }}>⭐</span>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                    {new Date(r.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                {r.comment && (
+                  <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text)', lineHeight: 1.4 }}>
+                    "{r.comment}"
+                  </p>
+                )}
+                <div style={{ marginTop: '12px', fontSize: '11px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                  Viaje #{r.rideId.substring(0, 8)} • Anónimo
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const HelpView: React.FC<{ onBack: () => void, onAction: (v: ViewType) => void }> = ({ onBack, onAction }) => {
   const { showToast } = useToast();
 
@@ -621,14 +672,22 @@ const MainMenuView: React.FC<{
 }> = ({ userName, currentMode, hasActiveRide, onAction, onSwitchMode, session, driverData }) => (
   <div className="main-menu-view fade-in">
     <div className="account-header" style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div className="user-info">
-          <h1 className="user-display-name" style={{ fontSize: '32px', fontWeight: 900, marginBottom: '4px', letterSpacing: '-0.02em' }}>{userName}</h1>
-          <div className="user-rating" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', fontWeight: 800, color: 'var(--text-muted)' }}>
-            <span style={{ color: '#000', display: 'flex', alignItems: 'center', gap: '2px' }}>★ 4.98</span>
-            <span style={{ opacity: 0.3 }}>|</span>
-            <span style={{ color: 'var(--text)', cursor: 'pointer' }}>Ver detalles</span>
-          </div>
+      <div className="user-info">
+        <h1 className="user-display-name" style={{ fontSize: '32px', fontWeight: 900, marginBottom: '4px', letterSpacing: '-0.02em' }}>{userName}</h1>
+        <div 
+          className="user-rating interactive-scale" 
+          onClick={() => onAction('ratings-details')}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', fontWeight: 800, color: 'var(--text-muted)' }}
+        >
+          <span style={{ color: '#000', display: 'flex', alignItems: 'center', gap: '2px' }}>
+            ★ {session?.ratingSummary?.averageRating?.toFixed(2) || '5.00'}
+          </span>
+          <span style={{ opacity: 0.3 }}>|</span>
+          <span style={{ color: 'var(--text)' }}>
+            {session?.ratingSummary?.totalRatings || 0} calificaciones
+          </span>
         </div>
+      </div>
         <div className="profile-avatar-premium" style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#F3F4F6', border: '2px solid white', boxShadow: 'var(--shadow-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
         </div>
@@ -733,12 +792,25 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
   };
 
   const [driverData, setDriverData] = useState<any>(null);
+  const [ratingSummary, setRatingSummary] = useState<any>(null);
+
+  useEffect(() => {
+    if (session?.user?.id) {
+      APIClient.getRatingSummary(session.user.id).then(setRatingSummary).catch(console.error);
+    }
+  }, [session, view]);
 
   useEffect(() => {
     if (session?.user?.userType === 'driver') {
       APIClient.getDriverSettings().then(setDriverData).catch(console.error);
     }
   }, [session, view]);
+
+  // Inject ratingSummary into session clone for view components
+  const sessionWithStats = useMemo(() => ({
+    ...session,
+    ratingSummary
+  }), [session, ratingSummary]);
 
   // We memoize current sub-view to prevent internal re-computations if props didn't change
   const currentView = useMemo(() => {
@@ -750,7 +822,7 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
                   hasActiveRide={hasActiveRide} 
                   onAction={handleAction} 
                   onSwitchMode={onSwitchMode} 
-                  session={session}
+                  session={sessionWithStats}
                   driverData={driverData}
                 />;
       case 'wallet':
@@ -761,9 +833,11 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
         return <HelpView onBack={handleBack} onAction={handleAction} />;
       case 'safety':
         return <SafetyView onBack={() => handleAction('help')} />;
+      case 'ratings-details':
+        return <RatingsDetailsView onBack={handleBack} userId={session?.user?.id} />;
       case 'settings':
         return <SettingsView 
-                  session={session} 
+                  session={sessionWithStats} 
                   onBack={handleBack} 
                   onVerify={onVerifyIdentity} 
                   onUserUpdate={onUserUpdate}
@@ -773,7 +847,7 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
       default:
         return null;
     }
-  }, [view, userName, currentMode, hasActiveRide, onSwitchMode, onClose, session, onVerifyIdentity, onUserUpdate]);
+  }, [view, userName, currentMode, hasActiveRide, onSwitchMode, onClose, sessionWithStats, onVerifyIdentity, onUserUpdate, session?.user?.id, driverData]);
 
   return (
     <div className="account-menu-sheet-container" style={{ padding: '24px', minHeight: '80vh', display: 'flex', flexDirection: 'column' }}>

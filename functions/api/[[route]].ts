@@ -602,6 +602,41 @@ app.get('/rides/my-active', authGuard, async (c) => {
   return c.json(activeRide || null);
 });
 
+// Get a single ride with embedded public driver info (for passenger tracking screen)
+app.get('/rides/:id/details', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  if (!rideId) return c.json({ error: 'ID de viaje requerido' }, 400);
+
+  const db = drizzle(c.env.DB, { schema });
+
+  const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId) });
+  if (!ride) return c.json({ error: 'Viaje no encontrado' }, 404);
+
+  let driverInfo = null;
+  if (ride.driverId) {
+    const [driver, driverUser, driverRating] = await Promise.all([
+      db.query.drivers.findFirst({ where: eq(schema.drivers.id, ride.driverId) }),
+      db.query.users.findFirst({ where: eq(schema.users.id, ride.driverId) }),
+      db.query.ratingSummary.findFirst({ where: eq(schema.ratingSummary.userId, ride.driverId) }),
+    ]);
+
+    if (driver && driverUser) {
+      driverInfo = {
+        fullName: driverUser.fullName,
+        vehicleBrand: driver.vehicleBrand,
+        vehicleModel: driver.vehicleModel,
+        vehicleYear: driver.vehicleYear,
+        vehicleType: driver.vehicleType,
+        licensePlate: driver.licensePlate,
+        rating: driverRating?.averageRating ?? driver.rating ?? 5.0,
+        totalTrips: driver.totalTrips ?? 0,
+      };
+    }
+  }
+
+  return c.json({ ...ride, driverInfo });
+});
+
 app.post('/rides/request', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const { pickup, dropoff, type, price, distance, duration, description, items } = await c.req.json();
@@ -659,17 +694,34 @@ app.get('/driver/setup', authGuard, async (c) => {
 
 app.post('/driver/setup', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
-  const { vehicleType } = await c.req.json();
+  const {
+    vehicleType,
+    vehicleBrand,
+    vehicleModel,
+    vehicleYear,
+    licensePlate,
+  } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
+
+  // Validate required vehicle fields
+  if (!vehicleType) return c.json({ error: 'Tipo de vehículo requerido' }, 400);
+  if (!vehicleBrand || !vehicleModel) return c.json({ error: 'Marca y modelo del vehículo son requeridos' }, 400);
+  if (!vehicleYear || vehicleYear < 1990 || vehicleYear > new Date().getFullYear() + 1) {
+    return c.json({ error: 'Año del vehículo inválido' }, 400);
+  }
+  if (!licensePlate || licensePlate.trim().length < 3) {
+    return c.json({ error: 'Número de placas requerido' }, 400);
+  }
+
   try {
     const newDriver = await db.insert(schema.drivers)
       .values({
         id: payload.id,
         vehicleType,
-        vehicleBrand: 'N/A',
-        vehicleModel: 'N/A',
-        vehicleYear: 2024,
-        licensePlate: `TEMP-${Date.now()}`,
+        vehicleBrand: vehicleBrand.trim(),
+        vehicleModel: vehicleModel.trim(),
+        vehicleYear: parseInt(vehicleYear, 10),
+        licensePlate: licensePlate.trim().toUpperCase(),
         driverLicense: 'PENDING',
         isActive: true,
         isVerified: true,
@@ -681,13 +733,18 @@ app.post('/driver/setup', authGuard, async (c) => {
         target: schema.drivers.id,
         set: {
           vehicleType,
+          vehicleBrand: vehicleBrand.trim(),
+          vehicleModel: vehicleModel.trim(),
+          vehicleYear: parseInt(vehicleYear, 10),
+          licensePlate: licensePlate.trim().toUpperCase(),
           isActive: true,
           isVerified: true,
           updatedAt: new Date().toISOString()
         }
       })
       .returning();
-    // Also ensure the user record is updated to 'driver' type
+
+    // Ensure the user record is updated to 'driver' type
     await db.update(schema.users)
       .set({ userType: 'driver', updatedAt: new Date().toISOString() })
       .where(eq(schema.users.id, payload.id));
@@ -695,6 +752,11 @@ app.post('/driver/setup', authGuard, async (c) => {
     return c.json(newDriver[0]);
   } catch (error: any) {
     console.error('[/driver/setup] Error:', error);
+    // Handle duplicate license plate
+    const errStr = `${error.message} ${error.cause?.message || ''}`.toLowerCase();
+    if (errStr.includes('unique') && errStr.includes('license_plate')) {
+      return c.json({ error: 'Esas placas ya están registradas por otro conductor.' }, 409);
+    }
     return c.json({ error: error.message }, 500);
   }
 });
@@ -869,30 +931,115 @@ app.post('/rides/:id/rate', authGuard, async (c) => {
     return c.json({ error: 'Calificación inválida (debe ser de 1 a 5)' }, 400);
   }
 
+  if (payload.id === ratedId) {
+    return c.json({ error: 'No puedes calificarte a ti mismo' }, 400);
+  }
+
   try {
+    // 1. Validate ride exists and is completed
+    const ride = await db.query.rides.findFirst({
+      where: eq(schema.rides.id, rideId)
+    });
+
+    if (!ride) return c.json({ error: 'Viaje no encontrado' }, 404);
+    if (ride.status !== 'completed') {
+      return c.json({ error: 'Solo puedes calificar viajes completados' }, 400);
+    }
+
+    // 2. Validate rater and rated were part of the ride
+    const isRaterPassenger = ride.passengerId === payload.id;
+    const isRaterDriver = ride.driverId === payload.id;
+    const isRatedPassenger = ride.passengerId === ratedId;
+    const isRatedDriver = ride.driverId === ratedId;
+
+    if (!isRaterPassenger && !isRaterDriver) {
+      return c.json({ error: 'No participaste en este viaje' }, 403);
+    }
+
+    if (!isRatedPassenger && !isRatedDriver) {
+      return c.json({ error: 'El usuario calificado no participó en este viaje' }, 400);
+    }
+
+    // 3. Insert rating (Unique constraint will handle double-rating if added to DB)
     await db.insert(schema.ratings).values({
       rideId,
       raterId: payload.id,
       ratedId,
-      rating,
+      rating: Math.floor(rating),
       comment
     });
 
-    // Update global rating of the rated user if they are a driver
-    const driver = await db.query.drivers.findFirst({ where: eq(schema.drivers.id, ratedId) });
-    if (driver) {
-      const allRatings = await db.query.ratings.findMany({ where: eq(schema.ratings.ratedId, ratedId) });
-      const avgRating = allRatings.reduce((acc, curr) => acc + curr.rating, 0) / allRatings.length;
+    // 4. Update rating_summary incrementally
+    const summary = await db.query.ratingSummary.findFirst({
+      where: eq(schema.ratingSummary.userId, ratedId)
+    });
 
-      await db.update(schema.drivers)
-        .set({ rating: avgRating })
-        .where(eq(schema.drivers.id, ratedId));
+    if (summary) {
+      const newTotal = (summary.totalRatings || 0) + 1;
+      const newAverage = ((summary.averageRating || 0) * (summary.totalRatings || 0) + rating) / newTotal;
+
+      await db.update(schema.ratingSummary)
+        .set({
+          averageRating: newAverage,
+          totalRatings: newTotal,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(schema.ratingSummary.userId, ratedId));
+    } else {
+      await db.insert(schema.ratingSummary).values({
+        userId: ratedId,
+        averageRating: rating,
+        totalRatings: 1
+      });
+    }
+
+    // 5. Also update the legacy 'rating' field in drivers table if the rated user is a driver
+    if (isRatedDriver) {
+      const updatedSummary = await db.query.ratingSummary.findFirst({
+        where: eq(schema.ratingSummary.userId, ratedId)
+      });
+      if (updatedSummary) {
+        await db.update(schema.drivers)
+          .set({ rating: updatedSummary.averageRating })
+          .where(eq(schema.drivers.id, ratedId));
+      }
     }
 
     return c.json({ success: true });
   } catch (error: any) {
+    if (error.message?.includes('UNIQUE') || error.cause?.message?.includes('UNIQUE')) {
+       return c.json({ error: 'Ya has calificado este viaje para este usuario' }, 409);
+    }
     return c.json({ error: error.message }, 500);
   }
+});
+
+app.get('/ratings/user/:id', authGuard, async (c) => {
+  const userId = c.req.param('id');
+  const db = drizzle(c.env.DB, { schema });
+
+  const userRatings = await db.query.ratings.findMany({
+    where: eq(schema.ratings.ratedId, userId),
+    orderBy: [desc(schema.ratings.createdAt)],
+    limit: 50
+  });
+
+  return c.json(userRatings);
+});
+
+app.get('/ratings/summary/:id', async (c) => {
+  const userId = c.req.param('id');
+  const db = drizzle(c.env.DB, { schema });
+
+  const summary = await db.query.ratingSummary.findFirst({
+    where: eq(schema.ratingSummary.userId, userId)
+  });
+
+  if (!summary) {
+    return c.json({ userId, averageRating: 5.0, totalRatings: 0 });
+  }
+
+  return c.json(summary);
 });
 
 // Real-time & Security Endpoints

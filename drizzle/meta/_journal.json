@@ -43,6 +43,13 @@
       "when": 1776032438853,
       "tag": "0005_concerned_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1776127809561,
+      "tag": "0006_fixed_bucky",
+      "breakpoints": true
     }
   ]
 }

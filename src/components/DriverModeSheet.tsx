@@ -194,7 +194,12 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     onOnlineChange?.(isOnline);
   }, [isOnline, onOnlineChange]);
   const [needsSetup, setNeedsSetup] = useState(session?.user?.userType === 'passenger');
+  const [setupStep, setSetupStep] = useState<1 | 2>(1);
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
+  const [vehicleBrand, setVehicleBrand] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [vehicleYear, setVehicleYear] = useState('');
+  const [licensePlate, setLicensePlate] = useState('');
   const [loading, setLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -254,11 +259,29 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       onLoginRequired('Identifícate para empezar a conducir');
       return;
     }
+
+    // Validate step 2 fields
+    if (!vehicleBrand.trim()) { showToast('Ingresa la marca de tu vehículo', 'error'); return; }
+    if (!vehicleModel.trim()) { showToast('Ingresa el modelo de tu vehículo', 'error'); return; }
+    const yearNum = parseInt(vehicleYear, 10);
+    if (!vehicleYear || yearNum < 1990 || yearNum > new Date().getFullYear() + 1) {
+      showToast('Ingresa un año válido (1990 en adelante)', 'error'); return;
+    }
+    if (!licensePlate.trim() || licensePlate.trim().length < 3) {
+      showToast('Ingresa las placas de tu vehículo', 'error'); return;
+    }
+
     setLoading(true);
     triggerHaptic('medium');
     try {
       const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
-      await APIClient.setupDriver(mappedType as any);
+      await APIClient.setupDriver({
+        vehicleType: mappedType,
+        vehicleBrand: vehicleBrand.trim(),
+        vehicleModel: vehicleModel.trim(),
+        vehicleYear: yearNum,
+        licensePlate: licensePlate.trim().toUpperCase(),
+      });
       
       const updatedUser = await APIClient.getProfile();
       if (updatedUser) {
@@ -354,31 +377,165 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     { type: 'skates', icon: '🛼', label: 'Patineta' }
   ], []);
 
+  const isStep2Valid = vehicleBrand.trim().length > 0
+    && vehicleModel.trim().length > 0
+    && vehicleYear.length === 4 && !isNaN(parseInt(vehicleYear, 10)) && parseInt(vehicleYear, 10) >= 1990
+    && licensePlate.trim().length >= 3;
+
+  const fieldInputStyle: React.CSSProperties = {
+    width: '100%', padding: '14px 16px', borderRadius: '16px',
+    border: '1.5px solid #E5E7EB', fontSize: '16px', fontWeight: 600,
+    fontFamily: 'inherit', background: '#FAFAFA', outline: 'none',
+    boxSizing: 'border-box', transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+  };
+  const fieldLabelStyle: React.CSSProperties = {
+    fontSize: '12px', fontWeight: 800, color: '#6B7280',
+    textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '8px', display: 'block',
+  };
+
   if (needsSetup) {
+    if (setupStep === 1) {
+      return (
+        <div className="driver-setup-minimal fade-in stagger-in">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#111827' }}></div>
+            <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#E5E7EB' }}></div>
+            <span style={{ fontSize: '12px', fontWeight: 800, color: '#9CA3AF', marginLeft: '4px' }}>1 / 2</span>
+          </div>
+          <h2 className="minimal-title-large" style={{ marginTop: '20px' }}>Comienza a ganar</h2>
+          <p className="minimal-desc-sm">¿Con qué tipo de vehículo trabajas?</p>
+          <div className="minimal-vehicle-grid">
+            {vehicleOptions.map(v => (
+              <button
+                key={v.type}
+                data-testid={`vehicle-btn-${v.type}`}
+                className={`minimal-vehicle-btn interactive-scale ${vehicleType === v.type ? 'active' : ''}`}
+                onClick={() => { triggerHaptic('light'); setVehicleType(v.type as any); }}
+              >
+                <span className="v-icon">{v.icon}</span>
+                <span className="v-label">{v.label}</span>
+              </button>
+            ))}
+          </div>
+          {!session && (
+            <div className="guest-badge-minimal" style={{ marginBottom: '20px', background: '#F1F5F9', padding: '12px', borderRadius: '12px', fontSize: '13px', color: '#64748B', textAlign: 'center' }}>
+              🔒 Modo Invitado: Se requiere iniciar sesión para activarte
+            </div>
+          )}
+          <button
+            className="confirm-button-minimal interactive-scale"
+            onClick={() => {
+              triggerHaptic('light');
+              if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+                onLoginRequired('Identífícate para empezar a conducir');
+                return;
+              }
+              setSetupStep(2);
+            }}
+            style={{ marginTop: '8px' }}
+          >
+            {session ? 'Siguiente →' : 'Identificarme y Empezar'}
+          </button>
+        </div>
+      );
+    }
+
+    // Step 2: Vehicle Details
     return (
       <div className="driver-setup-minimal fade-in stagger-in">
-        <h2 className="minimal-title-large">Comienza a ganar</h2>
-        <p className="minimal-desc-sm">Selecciona tu vehículo para empezar</p>
-        <div className="minimal-vehicle-grid">
-          {vehicleOptions.map(v => (
-            <button 
-                key={v.type} 
-                data-testid={`vehicle-btn-${v.type}`}
-                className={`minimal-vehicle-btn interactive-scale ${vehicleType === v.type ? 'active' : ''}`} 
-                onClick={() => { triggerHaptic('light'); setVehicleType(v.type as any); }}
-            >
-              <span className="v-icon">{v.icon}</span>
-              <span className="v-label">{v.label}</span>
-            </button>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+          <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#111827' }}></div>
+          <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#111827' }}></div>
+          <span style={{ fontSize: '12px', fontWeight: 800, color: '#9CA3AF', marginLeft: '4px' }}>2 / 2</span>
         </div>
-        {!session && (
-          <div className="guest-badge-minimal" style={{ marginBottom: '20px', background: '#F1F5F9', padding: '12px', borderRadius: '12px', fontSize: '13px', color: '#64748B', textAlign: 'center' }}>
-            🔒 Modo Invitado: Se requiere iniciar sesión para activarte
+        <button
+          onClick={() => { triggerHaptic('light'); setSetupStep(1); }}
+          style={{ background: 'none', border: 'none', fontSize: '14px', fontWeight: 700, color: '#6B7280', cursor: 'pointer', padding: '12px 0 0 0', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+        >
+          ← Volver
+        </button>
+        <h2 className="minimal-title-large" style={{ marginTop: '12px', marginBottom: '4px' }}>Datos del vehículo</h2>
+        <p className="minimal-desc-sm">Esta información se muestra a los pasajeros por seguridad.</p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', marginTop: '24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <div>
+              <label style={fieldLabelStyle}>Marca</label>
+              <input
+                type="text"
+                placeholder="Ej. Nissan"
+                value={vehicleBrand}
+                onChange={e => setVehicleBrand(e.target.value)}
+                style={fieldInputStyle}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                maxLength={30}
+              />
+            </div>
+            <div>
+              <label style={fieldLabelStyle}>Modelo</label>
+              <input
+                type="text"
+                placeholder="Ej. Versa"
+                value={vehicleModel}
+                onChange={e => setVehicleModel(e.target.value)}
+                style={fieldInputStyle}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                maxLength={30}
+              />
+            </div>
           </div>
-        )}
-        <button className="confirm-button-minimal interactive-scale" data-testid="driver-setup-btn" onClick={setupDriver} disabled={loading}>
-          {loading ? '...' : session ? 'Empezar' : 'Identificarme y Empezar'}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <div>
+              <label style={fieldLabelStyle}>Año</label>
+              <input
+                type="number"
+                placeholder="Ej. 2020"
+                value={vehicleYear}
+                onChange={e => setVehicleYear(e.target.value.slice(0, 4))}
+                style={fieldInputStyle}
+                min={1990}
+                max={new Date().getFullYear() + 1}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+              />
+            </div>
+            <div>
+              <label style={fieldLabelStyle}>Placas</label>
+              <input
+                type="text"
+                placeholder="Ej. ABC-1234"
+                value={licensePlate}
+                onChange={e => setLicensePlate(e.target.value.toUpperCase().slice(0, 10))}
+                style={fieldInputStyle}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                maxLength={10}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '20px', padding: '14px 16px', background: '#F0FDF4', borderRadius: '16px', border: '1px solid #BBF7D0', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+          <span style={{ fontSize: '16px', flexShrink: 0 }}>🛡️</span>
+          <p style={{ fontSize: '13px', color: '#166534', fontWeight: 600, margin: 0, lineHeight: 1.4 }}>
+            Tus datos son privados y solo se utilizan para validar tu registro en ZIPP.
+          </p>
+        </div>
+
+        <button
+          className="confirm-button-minimal interactive-scale"
+          data-testid="driver-setup-btn"
+          onClick={setupDriver}
+          disabled={loading || !isStep2Valid}
+          style={{
+            marginTop: '24px',
+            opacity: (!loading && isStep2Valid) ? 1 : 0.55,
+            cursor: (!loading && isStep2Valid) ? 'pointer' : 'not-allowed',
+          }}
+        >
+          {loading ? 'Registrando...' : '✓ Completar Registro'}
         </button>
       </div>
     );
