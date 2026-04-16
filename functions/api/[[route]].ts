@@ -1016,6 +1016,8 @@ app.post('/rides/:id/rate', authGuard, async (c) => {
 
 app.get('/ratings/user/:id', authGuard, async (c) => {
   const userId = c.req.param('id');
+  if (!userId) return c.json({ error: 'ID de usuario requerido' }, 400);
+
   const db = drizzle(c.env.DB, { schema });
 
   const userRatings = await db.query.ratings.findMany({
@@ -1029,6 +1031,8 @@ app.get('/ratings/user/:id', authGuard, async (c) => {
 
 app.get('/ratings/summary/:id', async (c) => {
   const userId = c.req.param('id');
+  if (!userId) return c.json({ error: 'ID de usuario requerido' }, 400);
+
   const db = drizzle(c.env.DB, { schema });
 
   const summary = await db.query.ratingSummary.findFirst({
