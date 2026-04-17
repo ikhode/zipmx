@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-export function useLocationTracker(_mode: 'passenger' | 'driver', userId?: string, isOnline?: boolean) {
+export function useLocationTracker(
+  _mode: 'passenger' | 'driver', 
+  userId?: string, 
+  isOnline?: boolean,
+  onRideUnavailable?: (rideId: string) => void
+) {
   const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<any>(null);
@@ -29,6 +34,10 @@ export function useLocationTracker(_mode: 'passenger' | 'driver', userId?: strin
             const filtered = prev.filter(d => d.id !== data.driver.id);
             return [...filtered, data.driver];
           });
+        } else if (data.type === 'driver_removed') {
+          setNearbyDrivers(prev => prev.filter(d => d.id !== data.id));
+        } else if (data.type === 'ride_unavailable') {
+          onRideUnavailable?.(data.id);
         }
       } catch (err) {
         console.error('[useLocationTracker] WS Message Error:', err);
@@ -55,14 +64,15 @@ export function useLocationTracker(_mode: 'passenger' | 'driver', userId?: strin
     };
   }, [connect]);
 
-  const updateLocation = useCallback((lat: number, lng: number, vehicleType: string) => {
+  const updateLocation = useCallback((lat: number, lng: number, vehicleType: string, isBusy: boolean = false) => {
     if (wsRef.current?.readyState === WebSocket.OPEN && userId && isOnline) {
       wsRef.current.send(JSON.stringify({
         type: 'update_location',
         id: userId,
         lat,
         lng,
-        vehicleType
+        vehicleType,
+        status: isBusy ? 'busy' : 'available'
       }));
     }
   }, [userId, isOnline]);

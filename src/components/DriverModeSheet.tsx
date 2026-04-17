@@ -12,6 +12,7 @@ interface DriverModeSheetProps {
   onOnlineChange?: (online: boolean) => void;
   onUserUpdate?: (user: APIUser) => void;
   activeRideOverride?: APIRide;
+  unavailableRideId?: string;
 }
 
 type VehicleType = 'car' | 'motorcycle' | 'bicycle' | 'rickshaw' | 'taxi' | 'skates';
@@ -244,7 +245,29 @@ const SearchingRadar = () => (
   </div>
 );
 
-export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange, onUserUpdate, activeRideOverride }: DriverModeSheetProps) {
+const EarningsBanner = ({ earnings, trips }: { earnings: number, trips: number }) => (
+  <div className="earnings-banner-premium">
+    <div className="eb-item">
+      <span className="eb-label">Ganancias Hoy</span>
+      <span className="eb-value">${earnings.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+    </div>
+    <div className="eb-divider"></div>
+    <div className="eb-item" style={{ alignItems: 'center' }}>
+      <span className="eb-label">Viajes</span>
+      <span className="eb-value">{trips}</span>
+    </div>
+  </div>
+);
+
+export function DriverModeSheet({ 
+  session, 
+  onActiveRideChange, 
+  onLoginRequired, 
+  onOnlineChange, 
+  onUserUpdate, 
+  activeRideOverride,
+  unavailableRideId 
+}: DriverModeSheetProps) {
   const { showToast } = useToast();
   
   // 1. All state at the top
@@ -298,6 +321,16 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     onActiveRideChange?.(!!activeRide);
   }, [activeRide, onActiveRideChange]);
 
+  // Si un viaje deja de estar disponible (cancelado o aceptado por otro), cerrar el overlay
+  useEffect(() => {
+    if (unavailableRideId && incomingRide?.id === unavailableRideId) {
+      console.log('[DriverModeSheet] Closing incoming overlay because ride is unavailable:', unavailableRideId);
+      setIncomingRide(null);
+      // También lo marcamos como ignorado localmente para que no intente re-aparecer si el polling aún lo trae
+      setIgnoredRideIds(prev => new Set(prev).add(unavailableRideId));
+    }
+  }, [unavailableRideId, incomingRide]);
+
   useEffect(() => {
     onOnlineChange?.(isOnline);
   }, [isOnline, onOnlineChange]);
@@ -345,7 +378,11 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
         else {
           setNeedsSetup(false);
           setIsOnline(driver.isActive);
-          if (!driver.isActive) {
+          // Siempre obtener estadísticas si está online para actualizar el banner
+          if (driver.isActive) {
+             APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
+          } else if (!driverStats) {
+             // Cargar una vez si está offline para tener datos previos
              APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
           }
         }
@@ -756,15 +793,25 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
                     <span className="go-subtext">TURNO</span>
                   </div>
                 </button>
-                <div style={{ marginTop: '40px', background: '#FFF8F1', border: '1px solid #FFE4CD', padding: '16px 24px', borderRadius: '16px' }}>
-                   <p style={{ color: '#C2410C', fontWeight: 800, fontSize: '14px', margin: 0 }}>Desconectado</p>
-                   <p style={{ color: '#9A3412', fontWeight: 500, fontSize: '13px', marginTop: '4px' }}>Toca el botón superior para empezar a recibir viajes.</p>
+                <div className="offline-card-premium fade-in">
+                   <div className="oc-icon">💤</div>
+                   <div className="oc-content">
+                     <p className="oc-title">Estás desconectado</p>
+                     <p className="oc-desc">Toca el botón superior para empezar a recibir viajes en tu zona.</p>
+                   </div>
                 </div>
               </div>
             ) : (
               <div className="scroll-card">
                 {isOnline ? (
                   <div className="driver-active-screen">
+                    {isOnline && driverStats && (
+                      <EarningsBanner 
+                        earnings={driverStats.todayEarnings || 0} 
+                        trips={driverStats.todayTrips || 0} 
+                      />
+                    )}
+
                     {incomingRide && (
                       <IncomingRideNotification 
                         ride={incomingRide} 
@@ -779,12 +826,12 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
                       </div>
                     ) : (
                       <div className="driver-focused-view">
-                    <ActiveRideFocused 
-                      ride={activeRide}
-                      onStart={() => handleUpdateStatus('in_progress')}
-                      onComplete={() => handleUpdateStatus('completed')}
-                      onArrive={() => handleUpdateStatus('arrived')}
-                    />
+                        <ActiveRideFocused 
+                          ride={activeRide}
+                          onStart={() => handleUpdateStatus('in_progress')}
+                          onComplete={() => handleUpdateStatus('completed')}
+                          onArrive={() => handleUpdateStatus('arrived')}
+                        />
                       </div>
                     )}
                   </div>

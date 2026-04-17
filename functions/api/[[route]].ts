@@ -63,9 +63,24 @@ async function sendPush(pushSubscriptionObjBase64OrJson: string, title: string, 
     });
 
     await webpush.sendNotification(subObj, payload);
-    console.log(`[WebPush] Push enviado exitosamente a la suscripción.`);
   } catch (err) {
     console.error('[WebPush] Error de red o encriptación al enviar push:', err);
+  }
+}
+
+/**
+ * Notifica al Durable Object que un viaje ya no está disponible
+ */
+async function notifyRideUnavailable(env: Bindings, rideId: string) {
+  try {
+    const id = env.LOCATION_TRACKER.idFromName('global');
+    const obj = env.LOCATION_TRACKER.get(id);
+    await obj.fetch('http://do/api/ws', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'ride_unavailable', id: rideId })
+    });
+  } catch (e) {
+    console.error('[LocationTracker] Error enviando ride_unavailable:', e);
   }
 }
 
@@ -513,9 +528,10 @@ app.post('/auth/verify-otp', async (c) => {
       }
     }
 
-    const secret = getSecret(c);
-    const jwtPayload: JWTPayload = { id: user!.id, email: user!.email || '', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
-    const token = await sign(jwtPayload, secret, 'HS256');
+    // Marcar códigos OTP previos como usados para este teléfono
+    await db.update(schema.verificationCodes)
+      .set({ used: true })
+      .where(eq(schema.verificationCodes.phone, user!.phone));
 
     return c.json({
       success: true,
@@ -599,6 +615,23 @@ app.get('/rides/my-active', authGuard, async (c) => {
     ),
     orderBy: [desc(schema.rides.createdAt)]
   });
+
+  // Lógica de expiración automática: Si el viaje sigue en 'requested' por más de 10 min
+  if (activeRide && activeRide.status === 'requested') {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    if (activeRide.createdAt && activeRide.createdAt < tenMinutesAgo) {
+      const [cancelledRide] = await db.update(schema.rides)
+        .set({ status: 'cancelled', cancelledAt: new Date().toISOString() })
+        .where(eq(schema.rides.id, activeRide.id))
+        .returning();
+      
+      // Notificar al tracker para que los conductores limpien si aún lo tenían en lista (aunque el filtro ya lo debería haber quitado)
+      await notifyRideUnavailable(c.env, activeRide.id);
+      
+      return c.json(cancelledRide);
+    }
+  }
+
   return c.json(activeRide || null);
 });
 
@@ -611,6 +644,12 @@ app.get('/rides/:id/details', authGuard, async (c) => {
 
   const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId) });
   if (!ride) return c.json({ error: 'Viaje no encontrado' }, 404);
+
+  const payload = c.get('jwtPayload') as JWTPayload;
+  // Seguridad: Solo el pasajero o el conductor del viaje pueden ver los detalles
+  if (ride.passengerId !== payload.id && ride.driverId !== payload.id) {
+    return c.json({ error: 'No tienes permiso para ver los detalles de este viaje' }, 403);
+  }
 
   let driverInfo = null;
   if (ride.driverId) {
@@ -639,9 +678,30 @@ app.get('/rides/:id/details', authGuard, async (c) => {
 
 app.post('/rides/request', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
-  const { pickup, dropoff, type, price, distance, duration, description, items } = await c.req.json();
-  const db = drizzle(c.env.DB, { schema });
   try {
+    const { pickup, dropoff, type, price, distance, duration, description, items } = await c.req.json();
+    const db = drizzle(c.env.DB, { schema });
+
+    // Anti-Fraude: Validar el precio en el servidor usando tarifas oficiales
+    const VEHICLE_RATES: Record<string, { base: number, km: number, min: number }> = { 
+      'car': { base: 25, km: 10.0, min: 2.0 }, 
+      'taxi': { base: 30, km: 11.0, min: 2.2 }, 
+      'rickshaw': { base: 20, km: 8.0, min: 1.5 }, 
+      'motorcycle': { base: 22, km: 9.0, min: 1.8 }
+    };
+
+    const rates = VEHICLE_RATES[type] || VEHICLE_RATES['car'];
+    const calculatedMinPrice = rates.base + (distance * rates.km) + (duration * rates.min);
+    
+    // Permitir un margen del 15% por variaciones de redondeo o promociones futuras
+    if (price < calculatedMinPrice * 0.85) {
+      console.warn(`[AntiFraud] Bloqueado viaje de $${price}. Geolocalización sugería min: $${calculatedMinPrice}`);
+      return c.json({ 
+        error: 'Precio inválido o manipulado', 
+        details: 'El precio propuesto es demasiado bajo para la distancia solicitada.' 
+      }, 400);
+    }
+    
     // Clear any previous stuck rides for this passenger
     await db.update(schema.rides)
       .set({ status: 'cancelled', cancelledAt: new Date().toISOString() })
@@ -691,6 +751,9 @@ app.post('/rides/:id/cancel', authGuard, async (c) => {
   if (updated.length === 0) {
     return c.json({ error: 'No puedes cancelar un viaje que ya está en camino o ha finalizado' }, 400);
   }
+  
+  // Notificar al tracker para limpiar el overlay de los conductores (si aplica)
+  await notifyRideUnavailable(c.env, rideId);
   
   return c.json({ success: true });
 });
@@ -829,8 +892,15 @@ app.post('/driver/settings', authGuard, async (c) => {
 
 app.get('/rides/available', authGuard, async (c) => {
   const db = drizzle(c.env.DB, { schema });
+  
+  // 10 minutos de expiración para viajes requested
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
   const rides = await db.query.rides.findMany({
-    where: eq(schema.rides.status, 'requested'),
+    where: and(
+      eq(schema.rides.status, 'requested'),
+      gte(schema.rides.createdAt, tenMinutesAgo)
+    ),
     orderBy: [desc(schema.rides.createdAt)],
     limit: 10,
   });
@@ -869,7 +939,32 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
 
-  // Fix: Prevent race condition – only accept if ride is still 'requested'
+  // 1. Verificar bloqueo administrativo
+  const driver = await db.query.drivers.findFirst({ where: eq(schema.drivers.id, payload.id) });
+  if (driver && driver.isBlocked) {
+    return c.json({ error: 'Tu cuenta de conductor está bloqueada por administración' }, 403);
+  }
+
+  // 2. Verificar morosidad del conductor
+  if (driver && (driver.unpaidCommissionAmount || 0) > 500) {
+    return c.json({ 
+      error: 'Deuda de comisiones excedida ($' + driver.unpaidCommissionAmount.toFixed(2) + ')', 
+      details: 'Debes liquidar tus comisiones pendientes para seguir operando.' 
+    }, 403);
+  }
+
+  // 2. Verificar si el conductor ya tiene un viaje activo (Exclusividad)
+  const activeRideCheck = await db.query.rides.findFirst({
+    where: and(
+      eq(schema.rides.driverId, payload.id),
+      inArray(schema.rides.status, ['accepted', 'arrived', 'in_progress'])
+    )
+  });
+  if (activeRideCheck) {
+    return c.json({ error: 'Ya tienes un viaje activo en curso' }, 400);
+  }
+
+  // 3. Fix: Prevent race condition – only accept if ride is still 'requested'
   // We use returning() to check if the update actually matched the requested status
   const updated = await db.update(schema.rides).set({
     driverId: payload.id, status: 'accepted', acceptedAt: new Date().toISOString(),
@@ -880,6 +975,9 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   }
 
   const ride = updated[0];
+
+  // 4. Notificar al tracker que el viaje ya no está disponible (limpiar overlays)
+  await notifyRideUnavailable(c.env, rideId);
 
   // Trigger push to passenger
   try {
@@ -1104,6 +1202,19 @@ app.post('/driver/status', authGuard, async (c) => {
   const { isActive } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
 
+  // Seguridad: No permitir irse offline si hay un viaje activo
+  if (isActive === false) {
+    const activeRideCheck = await db.query.rides.findFirst({
+      where: and(
+        eq(schema.rides.driverId, payload.id),
+        inArray(schema.rides.status, ['accepted', 'arrived', 'in_progress'])
+      )
+    });
+    if (activeRideCheck) {
+      return c.json({ error: 'No puedes ponerte fuera de línea mientras tienes un viaje activo' }, 400);
+    }
+  }
+
   await db.update(schema.drivers)
     .set({
       isActive,
@@ -1156,13 +1267,28 @@ app.get('/drivers/nearby', async (c) => {
 
 
 app.post('/verify-identity', authGuard, async (c) => {
-  const { type } = await c.req.json();
+  const { type, name, phone } = await c.req.json();
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
 
-  // Fix: Persist verified = true in the users table for real
+  // 1. Si se intenta actualizar el teléfono, verificar que no esté en uso por otro ID
+  if (phone) {
+    const existing = await db.query.users.findFirst({
+      where: and(eq(schema.users.phone, phone), ne(schema.users.id, payload.id))
+    });
+    if (existing) {
+      return c.json({ error: 'Este número de teléfono ya está vinculado a otra cuenta' }, 409);
+    }
+  }
+
+  // 2. Persistir verificado y datos básicos
   await db.update(schema.users)
-    .set({ verified: true, updatedAt: new Date().toISOString() })
+    .set({ 
+      verified: true, 
+      fullName: name || undefined, 
+      phone: phone || undefined,
+      updatedAt: new Date().toISOString() 
+    })
     .where(eq(schema.users.id, payload.id));
 
   if (type === 'driver') {
@@ -1173,6 +1299,33 @@ app.post('/verify-identity', authGuard, async (c) => {
 
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
   return c.json({ success: true, user });
+});
+
+// Cancelación lado conductor (No-show o emergencia)
+app.post('/rides/:id/driver-cancel', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const db = drizzle(c.env.DB, { schema });
+
+  const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId!) });
+  if (!ride || ride.driverId !== payload.id) {
+    return c.json({ error: 'No autorizado o viaje no encontrado' }, 403);
+  }
+
+  if (ride.status === 'in_progress') {
+    return c.json({ error: 'No puedes cancelar un viaje que ya ha iniciado' }, 400);
+  }
+
+  await db.update(schema.rides)
+    .set({ 
+      status: 'cancelled', 
+      cancelledAt: new Date().toISOString(),
+      notes: (ride.notes || '') + ' [Cancelado por conductor]'
+    })
+    .where(eq(schema.rides.id, rideId!));
+
+  await notifyRideUnavailable(c.env, rideId!);
+  return c.json({ success: true });
 });
 
 // Mercado Pago Integration
@@ -1245,15 +1398,38 @@ app.post('/payments/webhook', async (c) => {
       headers: { 'Authorization': `Bearer ${mercadoPagoAccessToken}` }
     });
 
+    if (!mpRes.ok) return c.text('Provider Error', 500);
+
     const payment = await mpRes.json() as any;
     if (payment.status === 'approved') {
       const preferenceId = payment.order?.id || payment.preference_id;
       if (preferenceId) {
-        await db.update(schema.commissionPayments).set({
-          status: 'approved',
-          mercadopagoPaymentId: paymentId.toString(),
-          paidAt: new Date().toISOString(),
-        }).where(eq(schema.commissionPayments.mercadopagoPreferenceId, preferenceId));
+        // 1. Bucar el registro del pago pendiente
+        const commPayment = await db.query.commissionPayments.findFirst({
+          where: and(
+            eq(schema.commissionPayments.mercadopagoPreferenceId, preferenceId),
+            eq(schema.commissionPayments.status, 'pending') // Solo procesar si sigue pendiente
+          )
+        });
+
+        if (commPayment) {
+          // 2. Actualizar el pago a aprobado y restar la deuda del conductor atómicamente
+          await db.batch([
+            db.update(schema.commissionPayments).set({
+              status: 'approved',
+              mercadopagoPaymentId: paymentId.toString(),
+              paidAt: new Date().toISOString(),
+            }).where(eq(schema.commissionPayments.id, commPayment.id)),
+
+            // Actualizar la deuda en la tabla drivers de forma atómica
+            db.update(schema.drivers)
+              .set({
+                unpaidCommissionAmount: sql`${schema.drivers.unpaidCommissionAmount} - ${commPayment.amount}`,
+                updatedAt: new Date().toISOString()
+              })
+              .where(eq(schema.drivers.id, commPayment.driverId))
+          ]);
+        }
       }
     }
   }
