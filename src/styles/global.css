@@ -1824,6 +1824,91 @@ button:active {
   background: #000;
 }
 
+
+/* --- TRIP STEPPER V2 --- */
+.trip-stepper-v2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin: 8px 0 28px 0;
+  position: relative;
+  padding: 0 4px;
+}
+
+.stepper-line-v2 {
+  position: absolute;
+  top: 14px;
+  left: 32px;
+  right: 32px;
+  height: 2px;
+  background: #E5E7EB;
+  z-index: 1;
+}
+
+.stepper-progress-v2 {
+  height: 100%;
+  background: #10B981;
+  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+.stepper-step-v2 {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 2;
+  gap: 8px;
+  flex: 1;
+}
+
+.step-dot-v2 {
+  width: 30px;
+  height: 30px;
+  background: white;
+  border: 2px solid #E5E7EB;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.3s ease;
+  color: #9CA3AF;
+  font-weight: 800;
+}
+
+.stepper-step-v2.active .step-dot-v2 {
+  border-color: #10B981;
+  color: #10B981;
+  background: #ECFDF5;
+  transform: scale(1.1);
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
+}
+
+.stepper-step-v2.completed .step-dot-v2 {
+  background: #10B981;
+  border-color: #10B981;
+  color: white;
+}
+
+.step-label-v2 {
+  font-size: 10px;
+  font-weight: 900;
+  color: #9CA3AF;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.stepper-step-v2.active .step-label-v2 {
+  color: #111827;
+}
+
+.stepper-step-v2.completed .step-label-v2 {
+  color: #10B981;
+}
+
 /* --- AUTHENTICATION PREMIUM V2 --- */
 .auth-container {
   padding: 40px 24px;

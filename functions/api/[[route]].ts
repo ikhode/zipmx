@@ -677,10 +677,21 @@ app.post('/rides/:id/cancel', authGuard, async (c) => {
   const rideId = c.req.param('id') as string;
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
-  await db.update(schema.rides).set({
+
+  // Solo permitir cancelar si el viaje no ha comenzado (requested, accepted)
+  const updated = await db.update(schema.rides).set({
     status: 'cancelled',
     cancelledAt: new Date().toISOString(),
-  }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.passengerId, payload.id)));
+  }).where(and(
+    eq(schema.rides.id, rideId), 
+    eq(schema.rides.passengerId, payload.id),
+    inArray(schema.rides.status, ['requested', 'accepted'])
+  )).returning();
+
+  if (updated.length === 0) {
+    return c.json({ error: 'No puedes cancelar un viaje que ya está en camino o ha finalizado' }, 400);
+  }
+  
   return c.json({ success: true });
 });
 
@@ -859,14 +870,16 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   const db = drizzle(c.env.DB, { schema });
 
   // Fix: Prevent race condition – only accept if ride is still 'requested'
-  const ride = await db.query.rides.findFirst({
-    where: and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested'))
-  });
-  if (!ride) return c.json({ error: 'El viaje ya no está disponible o fue aceptado por otro conductor' }, 409);
-
-  await db.update(schema.rides).set({
+  // We use returning() to check if the update actually matched the requested status
+  const updated = await db.update(schema.rides).set({
     driverId: payload.id, status: 'accepted', acceptedAt: new Date().toISOString(),
-  }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested')));
+  }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested'))).returning();
+
+  if (updated.length === 0) {
+    return c.json({ error: 'El viaje ya no está disponible o fue aceptado por otro conductor' }, 409);
+  }
+
+  const ride = updated[0];
 
   // Trigger push to passenger
   try {
@@ -912,7 +925,7 @@ app.post('/rides/:id/status', authGuard, async (c) => {
         let commissionAmount = 0;
         let commissionRate = 0;
 
-        // Commission only after 5 trips
+        // Commission only after 5 trips (Incentive for new drivers)
         if (newTotalTrips > 5) {
           commissionRate = 0.10; // 10%
           commissionAmount = (ride.totalFare || 0) * commissionRate;
@@ -921,16 +934,23 @@ app.post('/rides/:id/status', authGuard, async (c) => {
         update.commissionAmount = commissionAmount;
         update.commissionRate = commissionRate;
 
-        // Update Driver Stats
-        await db.update(schema.drivers).set({
-          totalTrips: newTotalTrips,
-          totalEarnings: (driver.totalEarnings || 0) + (ride.totalFare || 0),
-          unpaidCommissionAmount: (driver.unpaidCommissionAmount || 0) + commissionAmount
-        }).where(eq(schema.drivers.id, driver.id));
+        // Perform both updates atomically using batch
+        await db.batch([
+          db.update(schema.drivers).set({
+            totalTrips: newTotalTrips,
+            totalEarnings: (driver.totalEarnings || 0) + (ride.totalFare || 0),
+            unpaidCommissionAmount: (driver.unpaidCommissionAmount || 0) + commissionAmount,
+            updatedAt: new Date().toISOString()
+          }).where(eq(schema.drivers.id, driver.id)),
+          db.update(schema.rides).set(update).where(eq(schema.rides.id, rideId))
+        ]);
+        
+        return c.json({ success: true });
       }
     }
   }
 
+  // Fallback or other status updates
   await db.update(schema.rides).set(update).where(eq(schema.rides.id, rideId));
   return c.json({ success: true });
 });

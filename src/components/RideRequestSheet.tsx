@@ -149,13 +149,15 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       setActiveRide(activeRideOverride);
       setStep('tracking');
     } else if (step === 'tracking' && !activeRideOverride) {
-      // Solo regresamos a service si localmente tampoco tenemos un viaje activo
-      // Esto evita el reset durante el pequeño lapso entre la creación del viaje y el primer poll exitoso
-      if (!activeRide) {
+      // Si el servidor ya no devuelve el viaje pero nosotros seguimos en tracking,
+      // es muy probable que haya finalizado. Protegemos el estado local.
+      if (activeRide && activeRide.status !== 'completed') {
+        setActiveRide(prev => prev ? { ...prev, status: 'completed' } : null);
+      } else if (!activeRide) {
         setStep('service');
       }
     }
-  }, [activeRideOverride]);
+  }, [activeRideOverride, step, activeRide]);
 
   useEffect(() => {
     onHeaderVisibilityChange(isPlanning || step === 'tracking');

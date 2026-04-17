@@ -92,6 +92,40 @@ const IncomingRideNotification = React.memo(({ ride, onAccept, onReject }: {
   );
 });
 
+const TripStepper = ({ status }: { status: APIRide['status'] }) => {
+  const steps = [
+    { key: 'accepted', label: 'En camino', icon: '🚗' },
+    { key: 'arrived', label: 'Recogida', icon: '📍' },
+    { key: 'in_progress', label: 'En viaje', icon: '🏁' },
+    { key: 'completed', label: 'Llegada', icon: '✅' }
+  ];
+
+  const currentIdx = steps.findIndex(s => s.key === status);
+  // Progress width: normalized to status
+  const progressWidth = currentIdx >= 0 ? (currentIdx / (steps.length - 1)) * 100 : 0;
+
+  return (
+    <div className="trip-stepper-v2">
+      <div className="stepper-line-v2">
+        <div className="stepper-progress-v2" style={{ width: `${progressWidth}%` }}></div>
+      </div>
+      {steps.map((step, idx) => {
+        const isCompleted = idx < currentIdx || status === 'completed';
+        const isActive = idx === currentIdx && status !== 'completed';
+        
+        return (
+          <div key={step.key} className={`stepper-step-v2 ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''}`}>
+            <div className="step-dot-v2">
+              {isCompleted ? '✓' : step.icon}
+            </div>
+            <span className="step-label-v2">{step.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const ActiveRideFocused = ({ 
   ride, 
   onArrive, 
@@ -113,6 +147,9 @@ const ActiveRideFocused = ({
           </div>
           <div className="trip-fare-premium">${ride.totalFare}</div>
         </div>
+
+        {/* --- TRIP STEPPER --- */}
+        <TripStepper status={ride.status} />
 
         <div className="trip-locations-focused" style={{ marginTop: '20px' }}>
           <div className="focused-addr-row">
@@ -214,7 +251,18 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [rides, setRides] = useState<EnrichedRide[]>([]);
-  const [ignoredRideIds, setIgnoredRideIds] = useState<Set<string>>(new Set());
+  const [ignoredRideIds, setIgnoredRideIds] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('zipp_ignored_rides');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('zipp_ignored_rides', JSON.stringify(Array.from(ignoredRideIds)));
+  }, [ignoredRideIds]);
   const [incomingRide, setIncomingRide] = useState<EnrichedRide | null>(null);
   const [showAcceptanceSplash, setShowAcceptanceSplash] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
@@ -241,7 +289,8 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     if (activeRideOverride) {
       setActiveRide(activeRideOverride);
     } else {
-      setActiveRide(null);
+      // Proteger el estado 'completed' para que no se quite la encuesta prematuramente
+      setActiveRide(prev => (prev?.status === 'completed' ? prev : null));
     }
   }, [activeRideOverride]);
 
