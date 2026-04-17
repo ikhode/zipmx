@@ -823,7 +823,22 @@ app.get('/rides/available', authGuard, async (c) => {
     orderBy: [desc(schema.rides.createdAt)],
     limit: 10,
   });
-  return c.json(rides);
+
+  // Enrich each ride with the passenger rating (for driver decision-making)
+  const enriched = await Promise.all(
+    rides.map(async (ride) => {
+      const passengerRating = await db.query.ratingSummary.findFirst({
+        where: eq(schema.ratingSummary.userId, ride.passengerId),
+      });
+      return {
+        ...ride,
+        passengerRating: passengerRating?.averageRating ?? null,
+        passengerTotalRatings: passengerRating?.totalRatings ?? 0,
+      };
+    })
+  );
+
+  return c.json(enriched);
 });
 
 app.get('/rides/active', authGuard, async (c) => {

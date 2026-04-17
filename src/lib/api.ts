@@ -24,6 +24,12 @@ export interface DriverPublicInfo {
   totalTrips: number;
 }
 
+/** Ride returned by /rides/available — includes passenger rating fields */
+export type EnrichedRide = APIRide & {
+  passengerRating: number | null;
+  passengerTotalRatings: number;
+};
+
 class APIClient {
   private static token: string | null = localStorage.getItem('zipp_auth_token');
 
@@ -230,8 +236,8 @@ class APIClient {
     return await this.request(`/drivers/nearby?lat=${lat}&lng=${lng}`);
   }
 
-  static async getAvailableRides() {
-    return await this.request('/rides/available');
+  static async getAvailableRides(): Promise<EnrichedRide[]> {
+    return await this.request<EnrichedRide[]>('/rides/available');
   }
 
   static async getActiveRide() {

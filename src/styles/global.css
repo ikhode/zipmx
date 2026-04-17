@@ -1516,6 +1516,314 @@ button:active {
   width: 100px;
 }
 
+/* --- DRIVER RIDE CARD V2 (Premium Redesign) --- */
+.driver-ride-card-v2 {
+  background: white;
+  border-radius: 24px;
+  border: 1px solid #E5E7EB;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.driver-ride-card-v2:active {
+  transform: scale(0.99);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+/* Header */
+.ride-card-header-v2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px 12px;
+  background: #F9FAFB;
+  border-bottom: 1px solid #F0F0F0;
+}
+.ride-type-badge-v2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 900;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: #E5E7EB;
+  padding: 5px 12px;
+  border-radius: 100px;
+}
+.ride-fare-v2 {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+.fare-currency-v2 {
+  font-size: 15px;
+  font-weight: 800;
+  color: #6B7280;
+}
+.fare-amount-v2 {
+  font-size: 28px;
+  font-weight: 950;
+  color: #111827;
+  letter-spacing: -0.04em;
+}
+
+/* Route vis */
+.ride-route-v2 {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.route-row-v2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.route-dot-v2 {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.route-dot-v2.origin { background: #111827; }
+.route-dot-v2.dest { background: #10B981; }
+.route-line-v2 {
+  width: 2px;
+  height: 20px;
+  background: #E5E7EB;
+  margin: 4px 0 4px 4px;
+  border-radius: 2px;
+}
+.route-addr-v2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 30px);
+}
+.route-addr-v2.dest-text { color: #374151; }
+
+/* Stats pills */
+.ride-stats-v2 {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 16px;
+  flex-wrap: wrap;
+}
+.stat-pill-v2 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #F3F4F6;
+  padding: 6px 12px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  white-space: nowrap;
+}
+.stat-pill-v2.new-passenger {
+  background: #FEF9C3;
+  color: #92400E;
+}
+.stat-icon-v2 { font-size: 11px; }
+
+/* Accept button */
+.ride-accept-btn-v2 {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: #111827;
+  color: white;
+  font-size: 15px;
+  font-weight: 900;
+  border: none;
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: background 0.15s ease;
+  border-top: 1px solid rgba(0,0,0,0.1);
+}
+.ride-accept-btn-v2:hover { background: #1F2937; }
+.ride-accept-btn-v2:active { background: #030712; }
+.accept-arrow {
+  font-size: 18px;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+.ride-accept-btn-v2:hover .accept-arrow { transform: translateX(4px); opacity: 1; }
+
+/* --- INCOMING RIDE NOTIFICATION V2 --- */
+.incoming-ride-overlay-v2 {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.incoming-card-v2 {
+  width: 100%;
+  max-width: 400px;
+  background: white;
+  border-radius: 36px;
+  padding: 32px 24px;
+  box-shadow: 0 30px 60px rgba(0,0,0,0.25);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px solid rgba(255,255,255,0.2);
+  animation: slideInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.timer-container-v2 {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timer-svg-v2 {
+  transform: rotate(-90deg);
+}
+
+.timer-bg-v2 {
+  fill: none;
+  stroke: #F1F5F9;
+  stroke-width: 6;
+}
+
+.timer-progress-v2 {
+  fill: none;
+  stroke: #10B981;
+  stroke-width: 6;
+  transition: stroke-dashoffset 1s linear, stroke 0.3s ease;
+}
+
+.timer-text-v2 {
+  position: absolute;
+  font-size: 20px;
+  font-weight: 950;
+  color: #111827;
+}
+
+.incoming-info-v2 {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.incoming-fare-v2 {
+  font-size: 44px;
+  font-weight: 950;
+  color: #111827;
+  letter-spacing: -0.05em;
+  margin-bottom: 4px;
+}
+
+.incoming-type-v2-badge {
+  display: inline-block;
+  background: #E5E7EB;
+  padding: 6px 14px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 20px;
+}
+
+.incoming-stats-v2 {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.stat-p-v2 {
+  background: #F8FAFC;
+  padding: 8px 14px;
+  border-radius: 100px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.incoming-route-v2 {
+  width: 100%;
+  background: #F8FAFC;
+  padding: 24px;
+  border-radius: 24px;
+  margin-bottom: 32px;
+}
+
+.r-point-v2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dot-v2 {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-v2.origin { background: #111827; }
+.dot-v2.dest { background: #10B981; }
+
+.r-line-v2 {
+  width: 2px;
+  height: 16px;
+  background: #CBD5E1;
+  margin: 4px 0 4px 4px;
+  border-radius: 1px;
+}
+
+.incoming-actions-v2 {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.reject-btn-v2 {
+  background: #F1F5F9;
+  color: #64748B;
+  padding: 20px;
+  border-radius: 20px;
+  font-weight: 900;
+  font-size: 15px;
+  border: none;
+}
+
+.accept-btn-v2-notif {
+  background: #111827;
+  color: white;
+  padding: 20px;
+  border-radius: 20px;
+  font-weight: 950;
+  font-size: 15px;
+  border: none;
+  box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+}
+
+.accept-btn-v2-notif:active {
+  background: #000;
+}
+
 /* --- AUTHENTICATION PREMIUM V2 --- */
 .auth-container {
   padding: 40px 24px;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import APIClient, { APIUser, APIRide } from '../lib/api';
+import APIClient, { APIUser, APIRide, EnrichedRide } from '../lib/api';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
 import { playAlertSound, playSuccessSound } from '../lib/audio';
@@ -16,30 +16,78 @@ interface DriverModeSheetProps {
 
 type VehicleType = 'car' | 'motorcycle' | 'bicycle' | 'rickshaw' | 'taxi' | 'skates';
 
-interface RideCardProps {
-  ride: APIRide;
-  onAccept?: (id: string) => void;
-  onArrive?: () => void;
-  onStart?: () => void;
-  onComplete?: () => void;
-}
+const formatDist = (km?: number | null) =>
+  km == null ? '—' : km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 
-const RideCard = React.memo(({ ride, onAccept }: RideCardProps) => {
-  const isActionable = ride.status === 'requested' || ride.status === 'accepted' || ride.status === 'arrived' || ride.status === 'in_progress';
+const formatDur = (min?: number | null) =>
+  min == null ? '—' : min < 60 ? `${min} min` : `${Math.floor(min / 60)}h ${min % 60}m`;
+
+const IncomingRideNotification = React.memo(({ ride, onAccept, onReject }: { 
+  ride: EnrichedRide, 
+  onAccept: (id: string) => void, 
+  onReject: (id: string) => void 
+}) => {
+  const [timeLeft, setTimeLeft] = useState(15);
+  const totalTime = 15;
+
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      onReject(ride.id);
+      return;
+    }
+    const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+    return () => clearInterval(timer);
+  }, [timeLeft, ride.id, onReject]);
+
+  // SVG Progress calculation
+  const radius = 45;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (timeLeft / totalTime) * circumference;
 
   return (
-    <div className={`driver-ride-card fade-in ${!isActionable ? 'completed' : ''}`}>
-      <div className="ride-icon-mini">{ride.rideType === 'ride' ? '🚗' : '📦'}</div>
-      <div className="ride-info-mini">
-        <div className="addr-mini">📍 {ride.pickupAddress.split(',')[0]}</div>
-        <div className="addr-mini">🎯 {ride.dropoffAddress.split(',')[0]}</div>
-        <div className="fare-mini">${ride.totalFare.toFixed(0)}</div>
-      </div>
-      <div className="ride-actions-mini">
-        {ride.status === 'requested' && onAccept && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onAccept(ride.id); }}>ACEPTAR</button>
-        )}
-      </div>
+    <div className="incoming-ride-overlay-v2 fade-in">
+       <div className="incoming-card-v2 slide-up">
+          <div className="timer-container-v2">
+             <svg className="timer-svg-v2" width="100" height="100">
+                <circle className="timer-bg-v2" cx="50" cy="50" r={radius} />
+                <circle 
+                  className="timer-progress-v2" 
+                  cx="50" cy="50" r={radius} 
+                  strokeDasharray={circumference}
+                  strokeDashoffset={offset}
+                  strokeLinecap="round"
+                />
+             </svg>
+             <div className="timer-text-v2">{timeLeft}s</div>
+          </div>
+
+          <div className="incoming-info-v2">
+             <div className="incoming-fare-v2">${Math.round(ride.totalFare)}</div>
+             <div className="incoming-type-v2-badge">{ride.rideType === 'ride' ? '🚗 VIAJE NUEVO' : '📦 MANDADITO'}</div>
+             <div className="incoming-stats-v2">
+                <div className="stat-p-v2">📍 {formatDist(ride.distanceKm)}</div>
+                <div className="stat-p-v2">⭐ {ride.passengerRating?.toFixed(1) || 'Nuevo'}</div>
+                <div className="stat-p-v2">⏱️ {formatDur(ride.estimatedDurationMinutes)}</div>
+             </div>
+          </div>
+
+          <div className="incoming-route-v2">
+             <div className="r-point-v2">
+                <span className="dot-v2 origin"></span>
+                <span className="addr-v2">{ride.pickupAddress.split(',')[0]}</span>
+             </div>
+             <div className="r-line-v2"></div>
+             <div className="r-point-v2">
+                <span className="dot-v2 dest"></span>
+                <span className="addr-v2">{ride.dropoffAddress.split(',')[0]}</span>
+             </div>
+          </div>
+
+          <div className="incoming-actions-v2">
+             <button className="reject-btn-v2 interactive-scale" onClick={() => onReject(ride.id)}>RECHAZAR</button>
+             <button className="accept-btn-v2-notif interactive-scale" onClick={() => { triggerHaptic('success'); onAccept(ride.id); }}>ACEPTAR</button>
+          </div>
+       </div>
     </div>
   );
 });
@@ -161,20 +209,33 @@ const SearchingRadar = () => (
 
 export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange, onUserUpdate, activeRideOverride }: DriverModeSheetProps) {
   const { showToast } = useToast();
-  const [rides, setRides] = useState<APIRide[]>([]);
-  const prevRidesRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (rides.length > prevRidesRef.current) {
-       playAlertSound();
-    }
-    prevRidesRef.current = rides.length;
-  }, [rides]);
-
+  
+  // 1. All state at the top
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  const [isOnline, setIsOnline] = useState(false);
+  const [rides, setRides] = useState<EnrichedRide[]>([]);
+  const [ignoredRideIds, setIgnoredRideIds] = useState<Set<string>>(new Set());
+  const [incomingRide, setIncomingRide] = useState<EnrichedRide | null>(null);
   const [showAcceptanceSplash, setShowAcceptanceSplash] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   const [driverStats, setDriverStats] = useState<{todayEarnings?: number, todayTrips?: number} | null>(null);
+  const prevRidesRef = useRef<number>(0);
+
+  // 2. Effects follow state
+  useEffect(() => {
+    // If not on an active ride, and we have available rides that aren't ignored
+    if (!activeRide && isOnline && rides.length > 0) {
+      const nextRide = rides.find(r => !ignoredRideIds.has(r.id));
+      if (nextRide && (!incomingRide || incomingRide.id !== nextRide.id)) {
+        setIncomingRide(nextRide);
+        playAlertSound();
+      }
+    } else {
+      setIncomingRide(null);
+    }
+    prevRidesRef.current = rides.length;
+  }, [rides, ignoredRideIds, activeRide, isOnline, incomingRide]);
+
 
   useEffect(() => {
     if (activeRideOverride) {
@@ -187,9 +248,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
   useEffect(() => {
     onActiveRideChange?.(!!activeRide);
   }, [activeRide, onActiveRideChange]);
-  
-  const [isOnline, setIsOnline] = useState(false);
-  
+
   useEffect(() => {
     onOnlineChange?.(isOnline);
   }, [isOnline, onOnlineChange]);
@@ -316,25 +375,27 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     }
   }, [activeRide, fetchData, showToast]);
 
-  const handleAcceptRide = useCallback(async (id: string) => {
-    triggerHaptic('success');
-    setLoading(true);
+  const handleRejectRide = useCallback((id: string) => {
+    triggerHaptic('light');
+    setIgnoredRideIds(prev => new Set([...prev, id]));
+    setIncomingRide(null);
+  }, []);
+
+  const handleAcceptRide = async (id: string) => {
     try {
       await APIClient.acceptRide(id);
-      playSuccessSound();
+      triggerHaptic('success');
+      playSuccessSound(); // Using playSuccessSound here
+      setIncomingRide(null);
       setShowAcceptanceSplash(true);
       const active = await APIClient.getActiveRide();
-      if (active) {
-        setActiveRide(active);
-      }
-      fetchData();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Error al aceptar viaje';
-      showToast(message, 'error');
-    } finally {
-      setLoading(false);
+      setActiveRide(active);
+    } catch (error: any) {
+      showToast(error.message, 'error');
+      setIgnoredRideIds(prev => new Set([...prev, id]));
+      setIncomingRide(null);
     }
-  }, [fetchData, showToast]);
+  };
 
   const toggleOnline = async () => {
     if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
@@ -353,7 +414,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     
     setIsOnline(newState);
     if (!newState) {
-      setRides([]); // Clear rides if offline
+      setRides([]);
       APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
     }
 
@@ -361,7 +422,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       await APIClient.updateDriverStatus(newState);
       showToast(newState ? 'Estás en línea' : 'Te has desconectado', newState ? 'success' : 'info');
     } catch (e: unknown) {
-      setIsOnline(!newState); // revertir
+      setIsOnline(!newState);
       const message = e instanceof Error ? e.message : 'Error al cambiar estado';
       showToast(message, 'error');
       triggerHaptic('error');
@@ -427,7 +488,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
             onClick={() => {
               triggerHaptic('light');
               if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
-                onLoginRequired('Identífícate para empezar a conducir');
+                onLoginRequired('Identifícate para empezar a conducir');
                 return;
               }
               setSetupStep(2);
@@ -440,7 +501,6 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       );
     }
 
-    // Step 2: Vehicle Details
     return (
       <div className="driver-setup-minimal fade-in stagger-in">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -619,7 +679,6 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
             {!isOnline ? (
               <div className="offline-state-premium fade-in" style={{ textAlign: 'center', padding: '20px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 
-                {/* Stats Panel */}
                 <div style={{ width: '100%', maxWidth: '340px', background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '28px', boxShadow: '0 8px 24px rgba(0,0,0,0.06)', border: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-around', alignItems: 'center' }}>
                    <div style={{ textAlign: 'center' }}>
                      <p style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ganancias de hoy</p>
@@ -653,16 +712,34 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
                    <p style={{ color: '#9A3412', fontWeight: 500, fontSize: '13px', marginTop: '4px' }}>Toca el botón superior para empezar a recibir viajes.</p>
                 </div>
               </div>
-            ) : rides.length === 0 ? (
-              <SearchingRadar />
             ) : (
-              <div className="rides-list-container">
-                <h3 style={{ fontSize: '16px', fontWeight: 900, marginBottom: '20px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Solicitudes cercanas</h3>
-                <div className="rides-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {rides.map(ride => (
-                    <RideCard key={ride.id} ride={ride} onAccept={handleAcceptRide} />
-                  ))}
-                </div>
+              <div className="scroll-card">
+                {isOnline ? (
+                  <div className="driver-active-screen">
+                    {incomingRide && (
+                      <IncomingRideNotification 
+                        ride={incomingRide} 
+                        onAccept={handleAcceptRide} 
+                        onReject={handleRejectRide} 
+                      />
+                    )}
+                    
+                    {!activeRide ? (
+                      <div className="driver-focused-view">
+                        <SearchingRadar />
+                      </div>
+                    ) : (
+                      <div className="driver-focused-view">
+                    <ActiveRideFocused 
+                      ride={activeRide}
+                      onStart={() => handleUpdateStatus('in_progress')}
+                      onComplete={() => handleUpdateStatus('completed')}
+                      onArrive={() => handleUpdateStatus('arrived')}
+                    />
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
