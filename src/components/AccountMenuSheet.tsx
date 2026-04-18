@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import APIClient, { APIRide } from '../lib/api';
 import { triggerHaptic } from '../lib/haptics';
 import { useToast } from './ToastProvider';
+import { ImagePicker } from './ImagePicker';
 
 interface AccountMenuSheetProps {
   session: any;
@@ -668,8 +669,9 @@ const MainMenuView: React.FC<{
   onAction: (v: ViewType) => void, 
   onSwitchMode: () => void,
   session: any,
-  driverData: any
-}> = ({ userName, currentMode, hasActiveRide, onAction, onSwitchMode, session, driverData }) => (
+  driverData: any,
+  onImageUploaded: (url: string) => void
+}> = ({ userName, currentMode, hasActiveRide, onAction, onSwitchMode, session, driverData, onImageUploaded }) => (
   <div className="main-menu-view fade-in">
     <div className="account-header" style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
       <div className="user-info">
@@ -688,9 +690,11 @@ const MainMenuView: React.FC<{
           </span>
         </div>
       </div>
-        <div className="profile-avatar-premium" style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#F3F4F6', border: '2px solid white', boxShadow: 'var(--shadow-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-        </div>
+      <ImagePicker 
+        currentImageUrl={session?.user?.profileImageUrl} 
+        onImageUploaded={onImageUploaded} 
+        size={72}
+      />
     </div>
 
     <div className="account-action-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '32px' }}>
@@ -778,12 +782,25 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
   onVerifyIdentity, 
   onUserUpdate 
 }) => {
+  const { showToast } = useToast();
   const [view, setView] = useState<ViewType>('menu');
   const userName = session?.user?.fullName || 'Invitado';
 
   const handleAction = (newView: ViewType) => {
     triggerHaptic('light');
     setView(newView);
+  };
+
+  const handleImageUploaded = async (url: string) => {
+    try {
+      const updatedUser = await APIClient.updateProfile({ profileImageUrl: url });
+      if (updatedUser) {
+        onUserUpdate?.(updatedUser);
+        showToast('¡Foto de perfil actualizada!', 'success');
+      }
+    } catch (err: any) {
+      showToast('Error al actualizar perfil: ' + (err.message || ''), 'error');
+    }
   };
 
   const handleBack = () => {
@@ -824,6 +841,7 @@ export const AccountMenuSheet: React.FC<AccountMenuSheetProps> = ({
                   onSwitchMode={onSwitchMode} 
                   session={sessionWithStats}
                   driverData={driverData}
+                  onImageUploaded={handleImageUploaded}
                 />;
       case 'wallet':
         return <WalletView onBack={handleBack} driverData={driverData} />;

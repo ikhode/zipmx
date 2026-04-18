@@ -4,7 +4,9 @@ export function useLocationTracker(
   _mode: 'passenger' | 'driver', 
   userId?: string, 
   isOnline?: boolean,
-  onRideUnavailable?: (rideId: string) => void
+  onRideUnavailable?: (rideId: string) => void,
+  onChatMessage?: (rideId: string, message: any) => void,
+  onNewRide?: (ride: any) => void
 ) {
   const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -38,6 +40,10 @@ export function useLocationTracker(
           setNearbyDrivers(prev => prev.filter(d => d.id !== data.id));
         } else if (data.type === 'ride_unavailable') {
           onRideUnavailable?.(data.id);
+        } else if (data.type === 'chat_message') {
+          onChatMessage?.(data.rideId, data.message);
+        } else if (data.type === 'new_ride') {
+          onNewRide?.(data.ride);
         }
       } catch (err) {
         console.error('[useLocationTracker] WS Message Error:', err);

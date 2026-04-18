@@ -162,6 +162,7 @@ export default function App() {
    }, [session, mode]);
 
   const [unavailableRideId, setUnavailableRideId] = useState<string | null>(null);
+  const [newRideSignal, setNewRideSignal] = useState<any>(null);
 
   // Real-time Tracker
   const { nearbyDrivers: realTimeDriversRaw, updateLocation } = useLocationTracker(
@@ -173,6 +174,20 @@ export default function App() {
       setUnavailableRideId(rideId);
       // Clear after a tick to allow components to react
       setTimeout(() => setUnavailableRideId(null), 100);
+    },
+    (rideId, message) => {
+      console.log('[App] New chat message via WS:', rideId);
+      window.dispatchEvent(new CustomEvent('zipp-chat-message', { 
+        detail: { rideId, message } 
+      }));
+    },
+    (ride) => {
+      console.log('[App] New ride available via WS:', ride.id);
+      if (mode === 'driver' && driverIsOnline) {
+        setNewRideSignal(ride);
+        // Clear after a bit
+        setTimeout(() => setNewRideSignal(null), 1000);
+      }
     }
   );
 
@@ -618,7 +633,7 @@ export default function App() {
       {selectionMode === 'none' && (
         <div className={`scroll-content experience-${mode}`}>
           {mode === 'passenger' ? (
-            !planningStarted && !hasActiveRide ? (
+            !planningStarted && !hasActiveRide && !activeRide ? (
               <div className="home-content" style={{ pointerEvents: 'auto', display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                 <PassengerHome 
                   dropoffAddress={dropoffAddress}
@@ -657,9 +672,9 @@ export default function App() {
                     onLoginRequired={() => onLoginRequired('passenger')}
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
                     onHeaderVisibilityChange={setIsHeaderHidden}
-                    onActiveRideChange={(active) => {
-                      setHasActiveRide(active);
-                      if (!active) setActiveRide(null);
+                    onActiveRideChange={(ride) => {
+                      setHasActiveRide(!!ride);
+                      setActiveRide(ride);
                     }}
                     userLocation={userLocation}
                     geoLoading={geoLoading}
@@ -681,6 +696,8 @@ export default function App() {
                    onUserUpdate={(user) => setSession({ user })}
                    activeRideOverride={activeRide || undefined}
                    unavailableRideId={unavailableRideId || undefined}
+                   newRideSignal={newRideSignal || undefined}
+                   updateLocation={updateLocation}
                  />
                </div>
              </>

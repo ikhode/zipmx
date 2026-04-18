@@ -84,6 +84,63 @@ async function notifyRideUnavailable(env: Bindings, rideId: string) {
   }
 }
 
+async function notifyChatMessage(env: Bindings, rideId: string, message: any) {
+  try {
+    const id = env.LOCATION_TRACKER.idFromName('global');
+    const obj = env.LOCATION_TRACKER.get(id);
+    await obj.fetch('http://do/api/ws', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'chat_message', rideId, message })
+    });
+  } catch (e) {
+    console.error('[LocationTracker] Error enviando chat_message:', e);
+  }
+}
+
+/**
+ * Notifica a los conductores activos sobre un nuevo viaje propuesto
+ */
+async function notifyAvailableDrivers(c: Context<{ Bindings: Bindings }>, ride: any) {
+  const db = drizzle(c.env.DB, { schema });
+  try {
+    // 1. WebSocket Broadcast via Durable Object
+    const id = c.env.LOCATION_TRACKER.idFromName('global');
+    const obj = c.env.LOCATION_TRACKER.get(id);
+    await obj.fetch('http://do/api/ws', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'new_ride', ride })
+    });
+
+    // 2. Web Push Notifications
+    // Obtenemos conductores activos (limitado a 20 para evitar sobrecarga en push)
+    const activeDrivers = await db.query.drivers.findMany({
+      where: eq(schema.drivers.isActive, true),
+      limit: 20
+    });
+
+    if (activeDrivers.length > 0) {
+      const driverIds = activeDrivers.map(d => d.id);
+      const driverProfiles = await db.query.users.findMany({
+        where: inArray(schema.users.id, driverIds)
+      });
+
+      const pushPromises = driverProfiles
+        .filter(p => p.pushSubscription)
+        .map(p => sendPush(
+          p.pushSubscription!, 
+          ride.rideType === 'ride' ? '🚕 ¡Nuevo Viaje Disponible!' : '📦 ¡Nuevo Mandadito!', 
+          `Un pasajero solicita transporte en ${ride.pickupAddress.split(',')[0]}. ¡Acepta ahora!`, 
+          c,
+          { rideId: ride.id, type: 'NEW_RIDE' }
+        ));
+      
+      await Promise.allSettled(pushPromises);
+    }
+  } catch (e) {
+    console.error('[NotificationService] Error al notificar conductores:', e);
+  }
+}
+
 const authGuard = (c: Context<{ Bindings: Bindings }>, next: Next) => jwt({ secret: getSecret(c), alg: 'HS256' })(c, next);
 
 app.get('/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }));
@@ -336,7 +393,7 @@ app.get('/routing/route', async (c) => {
 
 app.post('/auth/signup', async (c) => {
   try {
-    const { email, phone, fullName, userType } = await c.req.json();
+    const { email, phone, fullName, userType, id: firebaseId } = await c.req.json();
     const db = drizzle(c.env.DB, { schema });
     const secret = getSecret(c);
 
@@ -345,15 +402,44 @@ app.post('/auth/signup', async (c) => {
       return c.json({ error: 'Todos los campos son obligatorios.' }, 400);
     }
 
-    const newUser = await db.insert(schema.users).values({
-      email, phone, fullName, userType,
-    }).returning();
+    // Normalize phone for consistency
+    const normalizedPhone = phone.startsWith('+') ? phone : `+52${phone.replace(/\D/g, '')}`;
 
-    if (!newUser || newUser.length === 0) {
-      throw new Error('No se pudo crear el usuario en la base de datos.');
+    // 1. Check if user already exists (e.g. created by verify-otp)
+    const existingUser = await db.query.users.findFirst({
+      where: eq(schema.users.phone, normalizedPhone)
+    });
+
+    let user;
+    if (existingUser) {
+      // 2. Update existing placeholder/user
+      const updated = await db.update(schema.users)
+        .set({
+          email,
+          fullName,
+          userType,
+          phone: normalizedPhone,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(schema.users.id, existingUser.id))
+        .returning();
+      user = updated[0];
+    } else {
+      // 3. Fresh insert
+      const newUser = await db.insert(schema.users).values({
+        id: firebaseId || undefined,
+        email,
+        phone: normalizedPhone,
+        fullName,
+        userType,
+      }).returning();
+      user = newUser[0];
     }
 
-    const user = newUser[0];
+    if (!user) {
+      throw new Error('No se pudo procesar el usuario en la base de datos.');
+    }
+
     const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
     const token = await sign(payload, secret, 'HS256');
     return c.json({ user, token });
@@ -496,6 +582,12 @@ app.post('/auth/verify-otp', async (c) => {
     // 2. If not found by UID, try by Phone (if not anonymous)
     if (!user && firebasePhone) {
       user = await db.query.users.findFirst({ where: eq(schema.users.phone, firebasePhone) });
+      
+      // Fallback: try without prefix if it's a 10 digit number in the DB
+      if (!user && firebasePhone.startsWith('+52')) {
+        const phoneWithoutPrefix = firebasePhone.slice(3);
+        user = await db.query.users.findFirst({ where: eq(schema.users.phone, phoneWithoutPrefix) });
+      }
     }
 
     if (!user) {
@@ -529,20 +621,37 @@ app.post('/auth/verify-otp', async (c) => {
     }
 
     // Marcar códigos OTP previos como usados para este teléfono
-    await db.update(schema.verificationCodes)
-      .set({ used: true })
-      .where(eq(schema.verificationCodes.phone, user!.phone));
+    if (user!.phone) {
+      await db.update(schema.verificationCodes)
+        .set({ used: true })
+        .where(eq(schema.verificationCodes.phone, user!.phone));
+    }
+
+    // Generate JWT Token for Zipp Session
+    const secret = getSecret(c);
+    const payloadJWT: JWTPayload = { 
+      id: user!.id, 
+      email: user!.email, 
+      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
+    };
+    const token = await sign(payloadJWT, secret, 'HS256');
 
     return c.json({
       success: true,
       user,
       token,
-      isNewUser: user!.phone.startsWith('anon_')
+      isNewUser: user!.phone.startsWith('anon_') || user!.fullName === 'Usuario Zipp'
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Backend Firebase Integration Error:', err);
-    return c.json({ error: 'Error de sincronización de identidad', details: message }, 500);
+    console.error('[/auth/verify-otp] Backend Error:', {
+      message,
+      stack: err instanceof Error ? err.stack : undefined
+    });
+    return c.json({ 
+      error: 'Error de sincronización de identidad', 
+      details: message 
+    }, 500);
   }
 });
 
@@ -727,6 +836,10 @@ app.post('/rides/request', authGuard, async (c) => {
       errandItems: items,
       status: 'requested',
     }).returning();
+    
+    // Notificar a los conductores de inmediato
+    await notifyAvailableDrivers(c, newRide[0]);
+
     return c.json(newRide[0]);
   } catch (error: any) {
     return c.json({ error: error.message }, 500);
@@ -1328,6 +1441,33 @@ app.post('/rides/:id/driver-cancel', authGuard, async (c) => {
   return c.json({ success: true });
 });
 
+// Chat Endpoints
+app.get('/rides/:id/messages', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  const db = drizzle(c.env.DB, { schema });
+  const messages = await db.query.rideMessages.findMany({
+    where: eq(schema.rideMessages.rideId, rideId!),
+    orderBy: [asc(schema.rideMessages.createdAt)]
+  });
+  return c.json(messages);
+});
+
+app.post('/rides/:id/messages', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const { text } = await c.req.json();
+  const db = drizzle(c.env.DB, { schema });
+
+  const [newMessage] = await db.insert(schema.rideMessages).values({
+    rideId: rideId!,
+    senderId: payload.id,
+    text: text.trim(),
+  }).returning();
+
+  await notifyChatMessage(c.env, rideId!, newMessage);
+  return c.json(newMessage);
+});
+
 // Mercado Pago Integration
 app.post('/payments/create', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
@@ -1435,6 +1575,46 @@ app.post('/payments/webhook', async (c) => {
   }
 
   return c.text('OK');
+});
+
+// File Management with R2
+app.post('/upload', authGuard, async (c) => {
+  const form = await c.req.formData();
+  const file = form.get('file') as File;
+  
+  if (!file) {
+    return c.json({ error: 'No file provided' }, 400);
+  }
+
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const extension = file.name.split('.').pop() || 'jpg';
+  const key = `uploads/${payload.id}/${crypto.randomUUID()}.${extension}`;
+  
+  await c.env.STORAGE.put(key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type }
+  });
+
+  return c.json({ 
+    success: true, 
+    url: `/api/files/${key}`,
+    key
+  });
+});
+
+app.get('/files/:key{.+}', async (c) => {
+  const key = c.req.param('key');
+  const file = await c.env.STORAGE.get(key);
+
+  if (!file) {
+    return c.text('File not found', 404);
+  }
+
+  const headers = new Headers();
+  file.writeHttpMetadata(headers);
+  headers.set('etag', file.httpEtag);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+  return new Response(file.body, { headers });
 });
 
 export const onRequest = handle(app);

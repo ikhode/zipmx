@@ -5,6 +5,7 @@ import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
 import { playNotificationSound, playSuccessSound } from '../lib/audio';
 import { PostRideSummary } from './PostRideSummary';
+import { ChatSheet } from './ChatSheet';
 
 // --- Constants ---
 const VEHICLE_RATES: Record<string, { base: number, km: number, min: number }> = { 
@@ -42,7 +43,7 @@ interface RideRequestSheetProps {
   onLoginRequired: (reason?: string) => void;
   preSelectedVehicle?: string;
   onHeaderVisibilityChange: (hide: boolean) => void;
-  onActiveRideChange?: (active: boolean) => void;
+  onActiveRideChange?: (ride: APIRide | null) => void;
   /** GPS coords of the device, null if not obtained yet */
   userLocation?: [number, number] | null;
   /** True while waiting for the first GPS fix */
@@ -80,6 +81,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
 
   const [suggestions, setSuggestions] = useState<GeocodingResult[]>([]);
   const [searchText, setSearchText] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [step, setStep] = useState<'service' | 'selection' | 'tracking'>('service');
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverPublicInfo | null>(null);
@@ -103,7 +105,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       prevRideStatusRef.current = null;
       setDriverInfo(null);
     }
-    onActiveRideChange?.(!!activeRide);
+    onActiveRideChange?.(activeRide);
   }, [activeRide, onActiveRideChange]);
   
   const [vehicleType, setVehicleType] = useState<string>(preSelectedVehicle || 'car');
@@ -144,17 +146,29 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     else if (typeof focusedInput === 'object') setSearchText(stops[focusedInput.index]?.address || '');
   }, [focusedInput, isPlanning]);
 
+  const trackingStartedAtRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (activeRideOverride) {
-      setActiveRide(activeRideOverride);
-      setStep('tracking');
+      // Si el override es un viaje completado/cancelado Y ya estamos en tracking, limpiamos
+      if (activeRideOverride.status === 'cancelled' || activeRideOverride.status === 'completed') {
+        if (step === 'tracking') {
+          setActiveRide(null);
+          setStep('service');
+          trackingStartedAtRef.current = null;
+        }
+      } else {
+        setActiveRide(activeRideOverride);
+        setStep('tracking');
+        if (!trackingStartedAtRef.current) trackingStartedAtRef.current = Date.now();
+      }
     } else if (step === 'tracking' && !activeRideOverride) {
-      // Si el servidor ya no devuelve el viaje pero nosotros seguimos en tracking,
-      // es muy probable que haya finalizado. Protegemos el estado local.
-      if (activeRide && activeRide.status !== 'completed') {
-        setActiveRide(prev => prev ? { ...prev, status: 'completed' } : null);
-      } else if (!activeRide) {
+      // Solo regresamos a service si no tenemos viaje local Y ha pasado suficiente tiempo
+      // (evita el flash cuando el servidor aún está procesando el viaje recién creado)
+      const elapsed = trackingStartedAtRef.current ? Date.now() - trackingStartedAtRef.current : 999999;
+      if (!activeRide && elapsed > 3000) {
         setStep('service');
+        trackingStartedAtRef.current = null;
       }
     }
   }, [activeRideOverride, step, activeRide]);
@@ -254,6 +268,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       
       setActiveRide(newRide);
       setStep('tracking');
+      if (onActiveRideChange) onActiveRideChange(newRide);
       showToast('Buscando conductor...', 'success');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido';
@@ -324,12 +339,12 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
           </div>
 
           <div className={`driver-arrival-card stagger-in ${activeRide.status === 'arrived' ? 'attention-pulse-bg' : ''}`} style={{ transition: 'background-color 0.4s ease' }}>
-             {activeRide.status === 'requested' ? (
-               <div style={{ transform: 'scale(0.8)', margin: '-20px 0' }}>
-                 <RadarSearch />
-               </div>
-             ) : (
-               <div className="driver-main-info fade-in" style={{ gap: '20px' }}>
+              {activeRide.status === 'requested' || (activeRide.status === 'cancelled' && !activeRide.driverId) ? (
+                <div style={{ transform: 'scale(0.8)', margin: '-20px 0' }}>
+                  <RadarSearch />
+                </div>
+              ) : (
+                <div className="driver-main-info fade-in" style={{ gap: '20px' }}>
                   <div className="driver-photo-premium" style={{ width: '72px', height: '72px', fontSize: '36px' }}>
                      👤
                   </div>
@@ -389,10 +404,29 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
             >
               🆘
             </button>
+            <button 
+              className="interactive-scale" 
+              onClick={() => {
+                setIsChatOpen(true);
+                triggerHaptic('light');
+              }}
+              style={{ width: '60px', borderRadius: '16px', background: '#F1F5F9', color: '#111827', border: 'none', fontWeight: 900, fontSize: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              title="Chat"
+            >
+              💬
+            </button>
             <button className="minimal-cancel-btn interactive-scale" style={{ flex: 1, marginTop: 0, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0' }} onClick={() => cancelRide(activeRide.id)}>
               {activeRide.status === 'requested' ? 'Cancelar búsqueda' : 'Cancelar viaje'}
             </button>
           </div>
+          
+          {isChatOpen && (
+            <ChatSheet 
+              rideId={activeRide.id} 
+              currentUser={session?.user || null} 
+              onClose={() => setIsChatOpen(false)} 
+            />
+          )}
         </div>
       </div>
     );

@@ -14,6 +14,18 @@ export class LocationTracker implements DurableObject {
           this.broadcast({ type: 'ride_unavailable', id: data.id });
           return new Response('OK');
         }
+        if (data.type === 'chat_message') {
+          this.broadcast({ type: 'chat_message', rideId: data.rideId, message: data.message });
+          return new Response('OK');
+        }
+        if (data.type === 'new_ride') {
+          this.broadcast({ type: 'new_ride', ride: data.ride });
+          return new Response('OK');
+        }
+        if (data.type === 'new_ride') {
+          this.broadcast({ type: 'new_ride', ride: data.ride });
+          return new Response('OK');
+        }
       } catch (e) {
         return new Response('Internal Error', { status: 500 });
       }

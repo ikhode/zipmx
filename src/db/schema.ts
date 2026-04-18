@@ -145,3 +145,14 @@ export const verificationCodes = sqliteTable('verification_codes', {
 
 export type VerificationCode = InferSelectModel<typeof verificationCodes>;
 export type NewVerificationCode = InferInsertModel<typeof verificationCodes>;
+
+export const rideMessages = sqliteTable('ride_messages', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  rideId: text('ride_id').notNull().references(() => rides.id),
+  senderId: text('sender_id').notNull().references(() => users.id),
+  text: text('text').notNull(),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`)
+});
+
+export type RideMessage = InferSelectModel<typeof rideMessages>;
+export type NewRideMessage = InferInsertModel<typeof rideMessages>;

@@ -4,6 +4,7 @@ import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
 import { playAlertSound, playSuccessSound } from '../lib/audio';
 import { PostRideSummary } from './PostRideSummary';
+import { ChatSheet } from './ChatSheet';
 
 interface DriverModeSheetProps {
   session: { user: APIUser } | null;
@@ -13,6 +14,8 @@ interface DriverModeSheetProps {
   onUserUpdate?: (user: APIUser) => void;
   activeRideOverride?: APIRide;
   unavailableRideId?: string;
+  newRideSignal?: any;
+  updateLocation?: (lat: number, lng: number, vehicleType: string, isBusy: boolean) => void;
 }
 
 type VehicleType = 'car' | 'motorcycle' | 'bicycle' | 'rickshaw' | 'taxi' | 'skates';
@@ -259,6 +262,39 @@ const EarningsBanner = ({ earnings, trips }: { earnings: number, trips: number }
   </div>
 );
 
+const WalletSection = ({ amount, onPay, loading }: { amount: number, onPay: () => void, loading: boolean }) => (
+  <div className="wallet-card-premium fade-in">
+    <div className="wallet-balance-row">
+      <div className="eb-item">
+        <span className="wallet-label">Comisiones Pendientes</span>
+        <span className="wallet-amount">${amount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+      </div>
+      <div className="eb-item" style={{ alignItems: 'flex-end' }}>
+        <div style={{ padding: '8px 12px', background: amount > 0 ? '#FEF2F2' : '#F0FDF4', borderRadius: '12px', color: amount > 0 ? '#B91C1C' : '#15803D', fontWeight: 800, fontSize: '11px' }}>
+          {amount > 0 ? 'PENDIENTE' : 'AL DÍA'}
+        </div>
+      </div>
+    </div>
+    
+    {amount > 0 && (
+      <button 
+        className="pay-btn-premium interactive-scale" 
+        onClick={onPay}
+        disabled={loading}
+      >
+        {loading ? 'Procesando...' : '💳 Liquidar Saldo'}
+      </button>
+    )}
+
+    {amount >= 400 && (
+      <div className="wallet-warning">
+        <div style={{ fontSize: '18px' }}>⚠️</div>
+        <p>Estás cerca del límite de deuda ($500). Liquida tu saldo para evitar bloqueos.</p>
+      </div>
+    )}
+  </div>
+);
+
 export function DriverModeSheet({ 
   session, 
   onActiveRideChange, 
@@ -266,13 +302,18 @@ export function DriverModeSheet({
   onOnlineChange, 
   onUserUpdate, 
   activeRideOverride,
-  unavailableRideId 
+  unavailableRideId,
+  newRideSignal,
+  updateLocation
 }: DriverModeSheetProps) {
   const { showToast } = useToast();
   
-  // 1. All state at the top
-  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const [isOnline, setIsOnline] = useState(false);
+  const [driverStats, setDriverStats] = useState<any>(null);
+  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  const [isPaymentLoading, setIsPaymentLoading] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [rides, setRides] = useState<EnrichedRide[]>([]);
   const [ignoredRideIds, setIgnoredRideIds] = useState<Set<string>>(() => {
     try {
@@ -289,7 +330,6 @@ export function DriverModeSheet({
   const [incomingRide, setIncomingRide] = useState<EnrichedRide | null>(null);
   const [showAcceptanceSplash, setShowAcceptanceSplash] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
-  const [driverStats, setDriverStats] = useState<{todayEarnings?: number, todayTrips?: number} | null>(null);
   const prevRidesRef = useRef<number>(0);
 
   // 2. Effects follow state
@@ -331,10 +371,10 @@ export function DriverModeSheet({
     }
   }, [unavailableRideId, incomingRide]);
 
+ 
   useEffect(() => {
     onOnlineChange?.(isOnline);
   }, [isOnline, onOnlineChange]);
-  const [needsSetup, setNeedsSetup] = useState(session?.user?.userType === 'passenger');
   const [setupStep, setSetupStep] = useState<1 | 2>(1);
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
   const [vehicleBrand, setVehicleBrand] = useState('');
@@ -352,6 +392,14 @@ export function DriverModeSheet({
       console.error('Fetch error:', error);
     }
   }, [session]);
+
+  // Si llega una señal de viaje nuevo vía WS, forzar fetchData() inmediato
+  useEffect(() => {
+    if (newRideSignal) {
+      console.log('[DriverModeSheet] New ride signal received via WS, fetching...');
+      fetchData();
+    }
+  }, [newRideSignal, fetchData]);
 
   useEffect(() => {
     if (!session) {
@@ -398,6 +446,48 @@ export function DriverModeSheet({
     }, 8000);
     return () => clearInterval(interval);
   }, [session, fetchData, isOnline, activeRide]);
+
+  // RASTREO ACTIVO DE UBICACIÓN
+  useEffect(() => {
+    if (!isOnline || !session) return;
+
+    let lastDbUpdate = 0;
+    let lastWsUpdate = 0;
+    
+    console.log('[DriverModeSheet] Starting geolocation tracking...');
+    
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        const now = Date.now();
+
+        // 1. Actualización WebSocket (Frecuente para el mapa de los pasajeros)
+        if (now - lastWsUpdate > 8000) {
+          const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
+          updateLocation?.(latitude, longitude, mappedType, !!activeRide);
+          lastWsUpdate = now;
+        }
+
+        // 2. Actualización DB (Persistencia para búsqueda de viajes)
+        if (now - lastDbUpdate > 20000) {
+          APIClient.updateDriverLocation(latitude, longitude).catch(console.error);
+          lastDbUpdate = now;
+        }
+      },
+      (err) => {
+        console.error('[DriverModeSheet] Geolocation error:', err);
+        if (err.code === 1) {
+          showToast('Permisos de ubicación requeridos para trabajar', 'error');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+    );
+
+    return () => {
+      console.log('[DriverModeSheet] Stopping geolocation tracking...');
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [isOnline, session, vehicleType, activeRide, updateLocation, showToast]);
 
   const setupDriver = async () => {
     if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
@@ -480,6 +570,28 @@ export function DriverModeSheet({
       showToast(error.message, 'error');
       setIgnoredRideIds(prev => new Set([...prev, id]));
       setIncomingRide(null);
+    }
+  };
+
+  const handlePayCommission = async () => {
+    if (!driverStats || (driverStats.unpaidCommissionAmount || 0) <= 0) return;
+    
+    setIsPaymentLoading(true);
+    triggerHaptic('medium');
+    try {
+      const { init_point } = await APIClient.createPayment({
+        amount: driverStats.unpaidCommissionAmount,
+        paymentMethod: 'credit_card',
+        description: `Liquidación de comisiones Zipp - ${session?.user?.fullName}`
+      });
+      
+      // Abrir MercadoPago en una nueva pestaña
+      window.open(init_point, '_blank');
+      showToast('Se ha abierto la ventana de pago de MercadoPago', 'info');
+    } catch (error: any) {
+      showToast('Error al iniciar el pago: ' + error.message, 'error');
+    } finally {
+      setIsPaymentLoading(false);
     }
   };
 
@@ -782,6 +894,12 @@ export function DriverModeSheet({
                    </div>
                 </div>
 
+                <WalletSection 
+                    amount={driverStats?.unpaidCommissionAmount || 0} 
+                    onPay={handlePayCommission}
+                    loading={isPaymentLoading}
+                 />
+
                 <button 
                   className="uber-go-button interactive-scale" 
                   onClick={toggleOnline}
@@ -832,6 +950,24 @@ export function DriverModeSheet({
                           onComplete={() => handleUpdateStatus('completed')}
                           onArrive={() => handleUpdateStatus('arrived')}
                         />
+                        
+                        <button 
+                          className="floating-chat-btn interactive-scale"
+                          onClick={() => {
+                            setIsChatOpen(true);
+                            triggerHaptic('light');
+                          }}
+                        >
+                          💬
+                        </button>
+
+                        {isChatOpen && (
+                          <ChatSheet 
+                            rideId={(activeRide as APIRide).id} 
+                            currentUser={session?.user || null} 
+                            onClose={() => setIsChatOpen(false)} 
+                          />
+                        )}
                       </div>
                     )}
                   </div>

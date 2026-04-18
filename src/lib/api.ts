@@ -327,6 +327,24 @@ class APIClient {
   static get isAuthenticated() {
     return !!this.token;
   }
+
+  static async createPayment(data: { amount: number, paymentMethod: string, description: string }): Promise<{ preference_id: string, init_point: string }> {
+    return await this.request('/payments/create', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  static async getRideMessages(rideId: string): Promise<any[]> {
+    return await this.request(`/rides/${rideId}/messages`);
+  }
+
+  static async sendChatMessage(rideId: string, text: string) {
+    return await this.request(`/rides/${rideId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text })
+    });
+  }
 }
 
 export default APIClient;
