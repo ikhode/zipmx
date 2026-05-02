@@ -866,6 +866,11 @@ app.post('/rides/:id/cancel', authGuard, async (c) => {
   }
 
   // 3. Verificar que el viaje no ha comenzado
+  if (ride.status === 'cancelled') {
+    // Idempotent success to let the frontend clear its state without throwing an error
+    return c.json({ success: true, message: 'El viaje ya había sido cancelado' });
+  }
+
   if (!['requested', 'accepted'].includes(ride.status)) {
     return c.json({ error: 'No puedes cancelar un viaje que ya está en camino o ha finalizado' }, 400);
   }
