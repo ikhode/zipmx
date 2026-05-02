@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import APIClient, { APIUser, APIRide } from '../lib/api';
+import APIClient, { APIUser, APIRide, EnrichedRide } from '../lib/api';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
 import { playAlertSound, playSuccessSound } from '../lib/audio';
 import { PostRideSummary } from './PostRideSummary';
+import { ChatSheet } from './ChatSheet';
 
 interface DriverModeSheetProps {
   session: { user: APIUser } | null;
@@ -12,37 +13,122 @@ interface DriverModeSheetProps {
   onOnlineChange?: (online: boolean) => void;
   onUserUpdate?: (user: APIUser) => void;
   activeRideOverride?: APIRide;
+  unavailableRideId?: string;
+  newRideSignal?: any;
+  updateLocation?: (lat: number, lng: number, vehicleType: string, isBusy: boolean) => void;
 }
 
 type VehicleType = 'car' | 'motorcycle' | 'bicycle' | 'rickshaw' | 'taxi' | 'skates';
 
-interface RideCardProps {
-  ride: APIRide;
-  onAccept?: (id: string) => void;
-  onArrive?: () => void;
-  onStart?: () => void;
-  onComplete?: () => void;
-}
+const formatDist = (km?: number | null) =>
+  km == null ? '—' : km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 
-const RideCard = React.memo(({ ride, onAccept }: RideCardProps) => {
-  const isActionable = ride.status === 'requested' || ride.status === 'accepted' || ride.status === 'arrived' || ride.status === 'in_progress';
+const formatDur = (min?: number | null) =>
+  min == null ? '—' : min < 60 ? `${min} min` : `${Math.floor(min / 60)}h ${min % 60}m`;
+
+const IncomingRideNotification = React.memo(({ ride, onAccept, onReject }: { 
+  ride: EnrichedRide, 
+  onAccept: (id: string) => void, 
+  onReject: (id: string) => void 
+}) => {
+  const [timeLeft, setTimeLeft] = useState(15);
+  const totalTime = 15;
+
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      onReject(ride.id);
+      return;
+    }
+    const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+    return () => clearInterval(timer);
+  }, [timeLeft, ride.id, onReject]);
+
+  // SVG Progress calculation
+  const radius = 45;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (timeLeft / totalTime) * circumference;
 
   return (
-    <div className={`driver-ride-card fade-in ${!isActionable ? 'completed' : ''}`}>
-      <div className="ride-icon-mini">{ride.rideType === 'ride' ? '🚗' : '📦'}</div>
-      <div className="ride-info-mini">
-        <div className="addr-mini">📍 {ride.pickupAddress.split(',')[0]}</div>
-        <div className="addr-mini">🎯 {ride.dropoffAddress.split(',')[0]}</div>
-        <div className="fare-mini">${ride.totalFare.toFixed(0)}</div>
-      </div>
-      <div className="ride-actions-mini">
-        {ride.status === 'requested' && onAccept && (
-          <button className="confirm-button-minimal interactive-scale" onClick={() => { triggerHaptic('medium'); onAccept(ride.id); }}>ACEPTAR</button>
-        )}
-      </div>
+    <div className="incoming-ride-overlay-v2 fade-in">
+       <div className="incoming-card-v2 slide-up">
+          <div className="timer-container-v2">
+             <svg className="timer-svg-v2" width="100" height="100">
+                <circle className="timer-bg-v2" cx="50" cy="50" r={radius} />
+                <circle 
+                  className="timer-progress-v2" 
+                  cx="50" cy="50" r={radius} 
+                  strokeDasharray={circumference}
+                  strokeDashoffset={offset}
+                  strokeLinecap="round"
+                />
+             </svg>
+             <div className="timer-text-v2">{timeLeft}s</div>
+          </div>
+
+          <div className="incoming-info-v2">
+             <div className="incoming-fare-v2">${Math.round(ride.totalFare)}</div>
+             <div className="incoming-type-v2-badge">{ride.rideType === 'ride' ? '🚗 VIAJE NUEVO' : '📦 MANDADITO'}</div>
+             <div className="incoming-stats-v2">
+                <div className="stat-p-v2">📍 {formatDist(ride.distanceKm)}</div>
+                <div className="stat-p-v2">⭐ {ride.passengerRating?.toFixed(1) || 'Nuevo'}</div>
+                <div className="stat-p-v2">⏱️ {formatDur(ride.estimatedDurationMinutes)}</div>
+             </div>
+          </div>
+
+          <div className="incoming-route-v2">
+             <div className="r-point-v2">
+                <span className="dot-v2 origin"></span>
+                <span className="addr-v2">{ride.pickupAddress.split(',')[0]}</span>
+             </div>
+             <div className="r-line-v2"></div>
+             <div className="r-point-v2">
+                <span className="dot-v2 dest"></span>
+                <span className="addr-v2">{ride.dropoffAddress.split(',')[0]}</span>
+             </div>
+          </div>
+
+          <div className="incoming-actions-v2">
+             <button className="reject-btn-v2 interactive-scale" onClick={() => onReject(ride.id)}>RECHAZAR</button>
+             <button className="accept-btn-v2-notif interactive-scale" onClick={() => { triggerHaptic('success'); onAccept(ride.id); }}>ACEPTAR</button>
+          </div>
+       </div>
     </div>
   );
 });
+
+const TripStepper = ({ status }: { status: APIRide['status'] }) => {
+  const steps = [
+    { key: 'accepted', label: 'En camino', icon: '🚗' },
+    { key: 'arrived', label: 'Recogida', icon: '📍' },
+    { key: 'in_progress', label: 'En viaje', icon: '🏁' },
+    { key: 'completed', label: 'Llegada', icon: '✅' }
+  ];
+
+  const currentIdx = steps.findIndex(s => s.key === status);
+  // Progress width: normalized to status
+  const progressWidth = currentIdx >= 0 ? (currentIdx / (steps.length - 1)) * 100 : 0;
+
+  return (
+    <div className="trip-stepper-v2">
+      <div className="stepper-line-v2">
+        <div className="stepper-progress-v2" style={{ width: `${progressWidth}%` }}></div>
+      </div>
+      {steps.map((step, idx) => {
+        const isCompleted = idx < currentIdx || status === 'completed';
+        const isActive = idx === currentIdx && status !== 'completed';
+        
+        return (
+          <div key={step.key} className={`stepper-step-v2 ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''}`}>
+            <div className="step-dot-v2">
+              {isCompleted ? '✓' : step.icon}
+            </div>
+            <span className="step-label-v2">{step.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 const ActiveRideFocused = ({ 
   ride, 
@@ -65,6 +151,9 @@ const ActiveRideFocused = ({
           </div>
           <div className="trip-fare-premium">${ride.totalFare}</div>
         </div>
+
+        {/* --- TRIP STEPPER --- */}
+        <TripStepper status={ride.status} />
 
         <div className="trip-locations-focused" style={{ marginTop: '20px' }}>
           <div className="focused-addr-row">
@@ -159,42 +248,139 @@ const SearchingRadar = () => (
   </div>
 );
 
-export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, onOnlineChange, onUserUpdate, activeRideOverride }: DriverModeSheetProps) {
+const EarningsBanner = ({ earnings, trips }: { earnings: number, trips: number }) => (
+  <div className="earnings-banner-premium">
+    <div className="eb-item">
+      <span className="eb-label">Ganancias Hoy</span>
+      <span className="eb-value">${earnings.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+    </div>
+    <div className="eb-divider"></div>
+    <div className="eb-item" style={{ alignItems: 'center' }}>
+      <span className="eb-label">Viajes</span>
+      <span className="eb-value">{trips}</span>
+    </div>
+  </div>
+);
+
+const WalletSection = ({ amount, onPay, loading }: { amount: number, onPay: () => void, loading: boolean }) => (
+  <div className="wallet-card-premium fade-in">
+    <div className="wallet-balance-row">
+      <div className="eb-item">
+        <span className="wallet-label">Comisiones Pendientes</span>
+        <span className="wallet-amount">${amount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+      </div>
+      <div className="eb-item" style={{ alignItems: 'flex-end' }}>
+        <div style={{ padding: '8px 12px', background: amount > 0 ? '#FEF2F2' : '#F0FDF4', borderRadius: '12px', color: amount > 0 ? '#B91C1C' : '#15803D', fontWeight: 800, fontSize: '11px' }}>
+          {amount > 0 ? 'PENDIENTE' : 'AL DÍA'}
+        </div>
+      </div>
+    </div>
+    
+    {amount > 0 && (
+      <button 
+        className="pay-btn-premium interactive-scale" 
+        onClick={onPay}
+        disabled={loading}
+      >
+        {loading ? 'Procesando...' : '💳 Liquidar Saldo'}
+      </button>
+    )}
+
+    {amount >= 400 && (
+      <div className="wallet-warning">
+        <div style={{ fontSize: '18px' }}>⚠️</div>
+        <p>Estás cerca del límite de deuda ($500). Liquida tu saldo para evitar bloqueos.</p>
+      </div>
+    )}
+  </div>
+);
+
+export function DriverModeSheet({ 
+  session, 
+  onActiveRideChange, 
+  onLoginRequired, 
+  onOnlineChange, 
+  onUserUpdate, 
+  activeRideOverride,
+  unavailableRideId,
+  newRideSignal,
+  updateLocation
+}: DriverModeSheetProps) {
   const { showToast } = useToast();
-  const [rides, setRides] = useState<APIRide[]>([]);
-  const prevRidesRef = useRef<number>(0);
+  
+  const [isOnline, setIsOnline] = useState(false);
+  const [driverStats, setDriverStats] = useState<any>(null);
+  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  const [isPaymentLoading, setIsPaymentLoading] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [rides, setRides] = useState<EnrichedRide[]>([]);
+  const [ignoredRideIds, setIgnoredRideIds] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('zipp_ignored_rides');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
 
   useEffect(() => {
-    if (rides.length > prevRidesRef.current) {
-       playAlertSound();
-    }
-    prevRidesRef.current = rides.length;
-  }, [rides]);
-
-  const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+    sessionStorage.setItem('zipp_ignored_rides', JSON.stringify(Array.from(ignoredRideIds)));
+  }, [ignoredRideIds]);
+  const [incomingRide, setIncomingRide] = useState<EnrichedRide | null>(null);
   const [showAcceptanceSplash, setShowAcceptanceSplash] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
-  const [driverStats, setDriverStats] = useState<{todayEarnings?: number, todayTrips?: number} | null>(null);
+  const prevRidesRef = useRef<number>(0);
+
+  // 2. Effects follow state
+  useEffect(() => {
+    // If not on an active ride, and we have available rides that aren't ignored
+    if (!activeRide && isOnline && rides.length > 0) {
+      const nextRide = rides.find(r => !ignoredRideIds.has(r.id));
+      if (nextRide && (!incomingRide || incomingRide.id !== nextRide.id)) {
+        setIncomingRide(nextRide);
+        playAlertSound();
+      }
+    } else {
+      setIncomingRide(null);
+    }
+    prevRidesRef.current = rides.length;
+  }, [rides, ignoredRideIds, activeRide, isOnline, incomingRide]);
+
 
   useEffect(() => {
     if (activeRideOverride) {
       setActiveRide(activeRideOverride);
     } else {
-      setActiveRide(null);
+      // Proteger el estado 'completed' para que no se quite la encuesta prematuramente
+      setActiveRide(prev => (prev?.status === 'completed' ? prev : null));
     }
   }, [activeRideOverride]);
 
   useEffect(() => {
     onActiveRideChange?.(!!activeRide);
   }, [activeRide, onActiveRideChange]);
-  
-  const [isOnline, setIsOnline] = useState(false);
-  
+
+  // Si un viaje deja de estar disponible (cancelado o aceptado por otro), cerrar el overlay
+  useEffect(() => {
+    if (unavailableRideId && incomingRide?.id === unavailableRideId) {
+      console.log('[DriverModeSheet] Closing incoming overlay because ride is unavailable:', unavailableRideId);
+      setIncomingRide(null);
+      // También lo marcamos como ignorado localmente para que no intente re-aparecer si el polling aún lo trae
+      setIgnoredRideIds(prev => new Set(prev).add(unavailableRideId));
+    }
+  }, [unavailableRideId, incomingRide]);
+
+ 
   useEffect(() => {
     onOnlineChange?.(isOnline);
   }, [isOnline, onOnlineChange]);
-  const [needsSetup, setNeedsSetup] = useState(session?.user?.userType === 'passenger');
+  const [setupStep, setSetupStep] = useState<1 | 2>(1);
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
+  const [vehicleBrand, setVehicleBrand] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [vehicleYear, setVehicleYear] = useState('');
+  const [licensePlate, setLicensePlate] = useState('');
   const [loading, setLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -206,6 +392,14 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       console.error('Fetch error:', error);
     }
   }, [session]);
+
+  // Si llega una señal de viaje nuevo vía WS, forzar fetchData() inmediato
+  useEffect(() => {
+    if (newRideSignal) {
+      console.log('[DriverModeSheet] New ride signal received via WS, fetching...');
+      fetchData();
+    }
+  }, [newRideSignal, fetchData]);
 
   useEffect(() => {
     if (!session) {
@@ -232,7 +426,11 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
         else {
           setNeedsSetup(false);
           setIsOnline(driver.isActive);
-          if (!driver.isActive) {
+          // Siempre obtener estadísticas si está online para actualizar el banner
+          if (driver.isActive) {
+             APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
+          } else if (!driverStats) {
+             // Cargar una vez si está offline para tener datos previos
              APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
           }
         }
@@ -249,16 +447,76 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     return () => clearInterval(interval);
   }, [session, fetchData, isOnline, activeRide]);
 
+  // RASTREO ACTIVO DE UBICACIÓN
+  useEffect(() => {
+    if (!isOnline || !session) return;
+
+    let lastDbUpdate = 0;
+    let lastWsUpdate = 0;
+    
+    console.log('[DriverModeSheet] Starting geolocation tracking...');
+    
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        const now = Date.now();
+
+        // 1. Actualización WebSocket (Frecuente para el mapa de los pasajeros)
+        if (now - lastWsUpdate > 8000) {
+          const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
+          updateLocation?.(latitude, longitude, mappedType, !!activeRide);
+          lastWsUpdate = now;
+        }
+
+        // 2. Actualización DB (Persistencia para búsqueda de viajes)
+        if (now - lastDbUpdate > 20000) {
+          APIClient.updateDriverLocation(latitude, longitude).catch(console.error);
+          lastDbUpdate = now;
+        }
+      },
+      (err) => {
+        console.error('[DriverModeSheet] Geolocation error:', err);
+        if (err.code === 1) {
+          showToast('Permisos de ubicación requeridos para trabajar', 'error');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+    );
+
+    return () => {
+      console.log('[DriverModeSheet] Stopping geolocation tracking...');
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [isOnline, session, vehicleType, activeRide, updateLocation, showToast]);
+
   const setupDriver = async () => {
     if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
       onLoginRequired('Identifícate para empezar a conducir');
       return;
     }
+
+    // Validate step 2 fields
+    if (!vehicleBrand.trim()) { showToast('Ingresa la marca de tu vehículo', 'error'); return; }
+    if (!vehicleModel.trim()) { showToast('Ingresa el modelo de tu vehículo', 'error'); return; }
+    const yearNum = parseInt(vehicleYear, 10);
+    if (!vehicleYear || yearNum < 1990 || yearNum > new Date().getFullYear() + 1) {
+      showToast('Ingresa un año válido (1990 en adelante)', 'error'); return;
+    }
+    if (!licensePlate.trim() || licensePlate.trim().length < 3) {
+      showToast('Ingresa las placas de tu vehículo', 'error'); return;
+    }
+
     setLoading(true);
     triggerHaptic('medium');
     try {
       const mappedType = vehicleType === 'skates' ? 'bicycle' : vehicleType;
-      await APIClient.setupDriver(mappedType as any);
+      await APIClient.setupDriver({
+        vehicleType: mappedType,
+        vehicleBrand: vehicleBrand.trim(),
+        vehicleModel: vehicleModel.trim(),
+        vehicleYear: yearNum,
+        licensePlate: licensePlate.trim().toUpperCase(),
+      });
       
       const updatedUser = await APIClient.getProfile();
       if (updatedUser) {
@@ -293,25 +551,49 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     }
   }, [activeRide, fetchData, showToast]);
 
-  const handleAcceptRide = useCallback(async (id: string) => {
-    triggerHaptic('success');
-    setLoading(true);
+  const handleRejectRide = useCallback((id: string) => {
+    triggerHaptic('light');
+    setIgnoredRideIds(prev => new Set([...prev, id]));
+    setIncomingRide(null);
+  }, []);
+
+  const handleAcceptRide = async (id: string) => {
     try {
       await APIClient.acceptRide(id);
-      playSuccessSound();
+      triggerHaptic('success');
+      playSuccessSound(); // Using playSuccessSound here
+      setIncomingRide(null);
       setShowAcceptanceSplash(true);
       const active = await APIClient.getActiveRide();
-      if (active) {
-        setActiveRide(active);
-      }
-      fetchData();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Error al aceptar viaje';
-      showToast(message, 'error');
-    } finally {
-      setLoading(false);
+      setActiveRide(active);
+    } catch (error: any) {
+      showToast(error.message, 'error');
+      setIgnoredRideIds(prev => new Set([...prev, id]));
+      setIncomingRide(null);
     }
-  }, [fetchData, showToast]);
+  };
+
+  const handlePayCommission = async () => {
+    if (!driverStats || (driverStats.unpaidCommissionAmount || 0) <= 0) return;
+    
+    setIsPaymentLoading(true);
+    triggerHaptic('medium');
+    try {
+      const { init_point } = await APIClient.createPayment({
+        amount: driverStats.unpaidCommissionAmount,
+        paymentMethod: 'credit_card',
+        description: `Liquidación de comisiones Zipp - ${session?.user?.fullName}`
+      });
+      
+      // Abrir MercadoPago en una nueva pestaña
+      window.open(init_point, '_blank');
+      showToast('Se ha abierto la ventana de pago de MercadoPago', 'info');
+    } catch (error: any) {
+      showToast('Error al iniciar el pago: ' + error.message, 'error');
+    } finally {
+      setIsPaymentLoading(false);
+    }
+  };
 
   const toggleOnline = async () => {
     if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
@@ -330,7 +612,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     
     setIsOnline(newState);
     if (!newState) {
-      setRides([]); // Clear rides if offline
+      setRides([]);
       APIClient.getDriverSettings().then(setDriverStats).catch(console.error);
     }
 
@@ -338,7 +620,7 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
       await APIClient.updateDriverStatus(newState);
       showToast(newState ? 'Estás en línea' : 'Te has desconectado', newState ? 'success' : 'info');
     } catch (e: unknown) {
-      setIsOnline(!newState); // revertir
+      setIsOnline(!newState);
       const message = e instanceof Error ? e.message : 'Error al cambiar estado';
       showToast(message, 'error');
       triggerHaptic('error');
@@ -354,31 +636,164 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
     { type: 'skates', icon: '🛼', label: 'Patineta' }
   ], []);
 
+  const isStep2Valid = vehicleBrand.trim().length > 0
+    && vehicleModel.trim().length > 0
+    && vehicleYear.length === 4 && !isNaN(parseInt(vehicleYear, 10)) && parseInt(vehicleYear, 10) >= 1990
+    && licensePlate.trim().length >= 3;
+
+  const fieldInputStyle: React.CSSProperties = {
+    width: '100%', padding: '14px 16px', borderRadius: '16px',
+    border: '1.5px solid #E5E7EB', fontSize: '16px', fontWeight: 600,
+    fontFamily: 'inherit', background: '#FAFAFA', outline: 'none',
+    boxSizing: 'border-box', transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+  };
+  const fieldLabelStyle: React.CSSProperties = {
+    fontSize: '12px', fontWeight: 800, color: '#6B7280',
+    textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '8px', display: 'block',
+  };
+
   if (needsSetup) {
+    if (setupStep === 1) {
+      return (
+        <div className="driver-setup-minimal fade-in stagger-in">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#111827' }}></div>
+            <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#E5E7EB' }}></div>
+            <span style={{ fontSize: '12px', fontWeight: 800, color: '#9CA3AF', marginLeft: '4px' }}>1 / 2</span>
+          </div>
+          <h2 className="minimal-title-large" style={{ marginTop: '20px' }}>Comienza a ganar</h2>
+          <p className="minimal-desc-sm">¿Con qué tipo de vehículo trabajas?</p>
+          <div className="minimal-vehicle-grid">
+            {vehicleOptions.map(v => (
+              <button
+                key={v.type}
+                data-testid={`vehicle-btn-${v.type}`}
+                className={`minimal-vehicle-btn interactive-scale ${vehicleType === v.type ? 'active' : ''}`}
+                onClick={() => { triggerHaptic('light'); setVehicleType(v.type as any); }}
+              >
+                <span className="v-icon">{v.icon}</span>
+                <span className="v-label">{v.label}</span>
+              </button>
+            ))}
+          </div>
+          {!session && (
+            <div className="guest-badge-minimal" style={{ marginBottom: '20px', background: '#F1F5F9', padding: '12px', borderRadius: '12px', fontSize: '13px', color: '#64748B', textAlign: 'center' }}>
+              🔒 Modo Invitado: Se requiere iniciar sesión para activarte
+            </div>
+          )}
+          <button
+            className="confirm-button-minimal interactive-scale"
+            onClick={() => {
+              triggerHaptic('light');
+              if (!session || (session.user?.phone && session.user.phone.startsWith('anon_'))) {
+                onLoginRequired('Identifícate para empezar a conducir');
+                return;
+              }
+              setSetupStep(2);
+            }}
+            style={{ marginTop: '8px' }}
+          >
+            {session ? 'Siguiente →' : 'Identificarme y Empezar'}
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="driver-setup-minimal fade-in stagger-in">
-        <h2 className="minimal-title-large">Comienza a ganar</h2>
-        <p className="minimal-desc-sm">Selecciona tu vehículo para empezar</p>
-        <div className="minimal-vehicle-grid">
-          {vehicleOptions.map(v => (
-            <button 
-                key={v.type} 
-                data-testid={`vehicle-btn-${v.type}`}
-                className={`minimal-vehicle-btn interactive-scale ${vehicleType === v.type ? 'active' : ''}`} 
-                onClick={() => { triggerHaptic('light'); setVehicleType(v.type as any); }}
-            >
-              <span className="v-icon">{v.icon}</span>
-              <span className="v-label">{v.label}</span>
-            </button>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+          <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#111827' }}></div>
+          <div style={{ flex: 1, height: '4px', borderRadius: '4px', background: '#111827' }}></div>
+          <span style={{ fontSize: '12px', fontWeight: 800, color: '#9CA3AF', marginLeft: '4px' }}>2 / 2</span>
         </div>
-        {!session && (
-          <div className="guest-badge-minimal" style={{ marginBottom: '20px', background: '#F1F5F9', padding: '12px', borderRadius: '12px', fontSize: '13px', color: '#64748B', textAlign: 'center' }}>
-            🔒 Modo Invitado: Se requiere iniciar sesión para activarte
+        <button
+          onClick={() => { triggerHaptic('light'); setSetupStep(1); }}
+          style={{ background: 'none', border: 'none', fontSize: '14px', fontWeight: 700, color: '#6B7280', cursor: 'pointer', padding: '12px 0 0 0', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+        >
+          ← Volver
+        </button>
+        <h2 className="minimal-title-large" style={{ marginTop: '12px', marginBottom: '4px' }}>Datos del vehículo</h2>
+        <p className="minimal-desc-sm">Esta información se muestra a los pasajeros por seguridad.</p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', marginTop: '24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <div>
+              <label style={fieldLabelStyle}>Marca</label>
+              <input
+                type="text"
+                placeholder="Ej. Nissan"
+                value={vehicleBrand}
+                onChange={e => setVehicleBrand(e.target.value)}
+                style={fieldInputStyle}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                maxLength={30}
+              />
+            </div>
+            <div>
+              <label style={fieldLabelStyle}>Modelo</label>
+              <input
+                type="text"
+                placeholder="Ej. Versa"
+                value={vehicleModel}
+                onChange={e => setVehicleModel(e.target.value)}
+                style={fieldInputStyle}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                maxLength={30}
+              />
+            </div>
           </div>
-        )}
-        <button className="confirm-button-minimal interactive-scale" data-testid="driver-setup-btn" onClick={setupDriver} disabled={loading}>
-          {loading ? '...' : session ? 'Empezar' : 'Identificarme y Empezar'}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <div>
+              <label style={fieldLabelStyle}>Año</label>
+              <input
+                type="number"
+                placeholder="Ej. 2020"
+                value={vehicleYear}
+                onChange={e => setVehicleYear(e.target.value.slice(0, 4))}
+                style={fieldInputStyle}
+                min={1990}
+                max={new Date().getFullYear() + 1}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+              />
+            </div>
+            <div>
+              <label style={fieldLabelStyle}>Placas</label>
+              <input
+                type="text"
+                placeholder="Ej. ABC-1234"
+                value={licensePlate}
+                onChange={e => setLicensePlate(e.target.value.toUpperCase().slice(0, 10))}
+                style={fieldInputStyle}
+                onFocus={e => { e.target.style.borderColor = '#111827'; e.target.style.boxShadow = '0 0 0 3px rgba(17,24,39,0.08)'; }}
+                onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                maxLength={10}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '20px', padding: '14px 16px', background: '#F0FDF4', borderRadius: '16px', border: '1px solid #BBF7D0', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+          <span style={{ fontSize: '16px', flexShrink: 0 }}>🛡️</span>
+          <p style={{ fontSize: '13px', color: '#166534', fontWeight: 600, margin: 0, lineHeight: 1.4 }}>
+            Tus datos son privados y solo se utilizan para validar tu registro en ZIPP.
+          </p>
+        </div>
+
+        <button
+          className="confirm-button-minimal interactive-scale"
+          data-testid="driver-setup-btn"
+          onClick={setupDriver}
+          disabled={loading || !isStep2Valid}
+          style={{
+            marginTop: '24px',
+            opacity: (!loading && isStep2Valid) ? 1 : 0.55,
+            cursor: (!loading && isStep2Valid) ? 'pointer' : 'not-allowed',
+          }}
+        >
+          {loading ? 'Registrando...' : '✓ Completar Registro'}
         </button>
       </div>
     );
@@ -462,7 +877,6 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
             {!isOnline ? (
               <div className="offline-state-premium fade-in" style={{ textAlign: 'center', padding: '20px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 
-                {/* Stats Panel */}
                 <div style={{ width: '100%', maxWidth: '340px', background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '28px', boxShadow: '0 8px 24px rgba(0,0,0,0.06)', border: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-around', alignItems: 'center' }}>
                    <div style={{ textAlign: 'center' }}>
                      <p style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ganancias de hoy</p>
@@ -480,6 +894,12 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
                    </div>
                 </div>
 
+                <WalletSection 
+                    amount={driverStats?.unpaidCommissionAmount || 0} 
+                    onPay={handlePayCommission}
+                    loading={isPaymentLoading}
+                 />
+
                 <button 
                   className="uber-go-button interactive-scale" 
                   onClick={toggleOnline}
@@ -491,21 +911,67 @@ export function DriverModeSheet({ session, onActiveRideChange, onLoginRequired, 
                     <span className="go-subtext">TURNO</span>
                   </div>
                 </button>
-                <div style={{ marginTop: '40px', background: '#FFF8F1', border: '1px solid #FFE4CD', padding: '16px 24px', borderRadius: '16px' }}>
-                   <p style={{ color: '#C2410C', fontWeight: 800, fontSize: '14px', margin: 0 }}>Desconectado</p>
-                   <p style={{ color: '#9A3412', fontWeight: 500, fontSize: '13px', marginTop: '4px' }}>Toca el botón superior para empezar a recibir viajes.</p>
+                <div className="offline-card-premium fade-in">
+                   <div className="oc-icon">💤</div>
+                   <div className="oc-content">
+                     <p className="oc-title">Estás desconectado</p>
+                     <p className="oc-desc">Toca el botón superior para empezar a recibir viajes en tu zona.</p>
+                   </div>
                 </div>
               </div>
-            ) : rides.length === 0 ? (
-              <SearchingRadar />
             ) : (
-              <div className="rides-list-container">
-                <h3 style={{ fontSize: '16px', fontWeight: 900, marginBottom: '20px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Solicitudes cercanas</h3>
-                <div className="rides-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {rides.map(ride => (
-                    <RideCard key={ride.id} ride={ride} onAccept={handleAcceptRide} />
-                  ))}
-                </div>
+              <div className="scroll-card">
+                {isOnline ? (
+                  <div className="driver-active-screen">
+                    {isOnline && driverStats && (
+                      <EarningsBanner 
+                        earnings={driverStats.todayEarnings || 0} 
+                        trips={driverStats.todayTrips || 0} 
+                      />
+                    )}
+
+                    {incomingRide && (
+                      <IncomingRideNotification 
+                        ride={incomingRide} 
+                        onAccept={handleAcceptRide} 
+                        onReject={handleRejectRide} 
+                      />
+                    )}
+                    
+                    {!activeRide ? (
+                      <div className="driver-focused-view">
+                        <SearchingRadar />
+                      </div>
+                    ) : (
+                      <div className="driver-focused-view">
+                        <ActiveRideFocused 
+                          ride={activeRide}
+                          onStart={() => handleUpdateStatus('in_progress')}
+                          onComplete={() => handleUpdateStatus('completed')}
+                          onArrive={() => handleUpdateStatus('arrived')}
+                        />
+                        
+                        <button 
+                          className="floating-chat-btn interactive-scale"
+                          onClick={() => {
+                            setIsChatOpen(true);
+                            triggerHaptic('light');
+                          }}
+                        >
+                          💬
+                        </button>
+
+                        {isChatOpen && (
+                          <ChatSheet 
+                            rideId={(activeRide as APIRide).id} 
+                            currentUser={session?.user || null} 
+                            onClose={() => setIsChatOpen(false)} 
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
             )}
           </div>

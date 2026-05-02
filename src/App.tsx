@@ -126,6 +126,7 @@ export default function App() {
   const [showLegal, setShowLegal] = useState<string | null>(null);
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
   const lastSelectionMode = React.useRef<SelectionType>('none');
+  const lastRideRef = useRef<APIRide | null>(null);
    
    // Polling for active ride
    useEffect(() => {
@@ -135,25 +136,69 @@ export default function App() {
          const ride = mode === 'driver' 
            ? await APIClient.getActiveRide()
            : await APIClient.getMyActiveRide();
+         
+         // Detección de cancelación externa (timeout o conductor canceló)
+         if (mode === 'passenger' && !ride && lastRideRef.current) {
+           const lastStatus = lastRideRef.current.status;
+           if (lastStatus === 'requested' || lastStatus === 'accepted') {
+              showToast('Lo sentimos, el viaje ya no está disponible o ha sido cancelado', 'warning');
+              triggerHaptic('warning');
+           }
+         }
+
          setActiveRide(ride);
          setHasActiveRide(!!ride);
+         lastRideRef.current = ride;
        } catch (err) {
          console.error('[App] Active ride polling error:', err);
        }
      };
      poll();
      const interval = setInterval(poll, 5000);
-     return () => clearInterval(interval);
+     return () => {
+       clearInterval(interval);
+       lastRideRef.current = null;
+     };
    }, [session, mode]);
 
+  const [unavailableRideId, setUnavailableRideId] = useState<string | null>(null);
+  const [newRideSignal, setNewRideSignal] = useState<any>(null);
+
   // Real-time Tracker
-  const { nearbyDrivers: realTimeDrivers, updateLocation } = useLocationTracker(
+  const { nearbyDrivers: realTimeDriversRaw, updateLocation } = useLocationTracker(
     mode, 
     session?.user?.id, 
-    mode === 'driver' && driverIsOnline
+    mode === 'driver' && driverIsOnline,
+    (rideId) => {
+      console.log('[App] Ride became unavailable via WS:', rideId);
+      setUnavailableRideId(rideId);
+      // Clear after a tick to allow components to react
+      setTimeout(() => setUnavailableRideId(null), 100);
+    },
+    (rideId, message) => {
+      console.log('[App] New chat message via WS:', rideId);
+      window.dispatchEvent(new CustomEvent('zipp-chat-message', { 
+        detail: { rideId, message } 
+      }));
+    },
+    (ride) => {
+      console.log('[App] New ride available via WS:', ride.id);
+      if (mode === 'driver' && driverIsOnline) {
+        setNewRideSignal(ride);
+        // Clear after a bit
+        setTimeout(() => setNewRideSignal(null), 1000);
+      }
+    }
   );
 
-   // Compute focused driver position for passengers
+  // Filter busy drivers for passengers
+  const realTimeDrivers = useMemo(() => {
+    if (mode === 'driver') return realTimeDriversRaw;
+    // If passenger, hide busy drivers
+    return realTimeDriversRaw.filter(d => d.status !== 'busy');
+  }, [mode, realTimeDriversRaw]);
+
+  // Compute focused driver position for passengers
    const activeRideDriverLocation = useMemo(() => {
      if (mode === 'passenger' && activeRide?.driverId) {
        const driver = realTimeDrivers.find(d => d.id === activeRide.driverId);
@@ -309,11 +354,11 @@ export default function App() {
   // Update driver location on server whenever userLocation changes and we are a driver
   useEffect(() => {
     if (mode === 'driver' && driverIsOnline && userLocation) {
-       // Fetch vehicle type from somewhere or default to car
-       // For now using 'car', we might want to store this in state
-       updateLocation(userLocation[0], userLocation[1], 'car');
+       // Determinamos si el conductor está ocupado
+       const isBusy = !!activeRide && activeRide.status !== 'completed';
+       updateLocation(userLocation[0], userLocation[1], 'car', isBusy);
     }
-  }, [mode, driverIsOnline, userLocation, updateLocation]);
+  }, [mode, driverIsOnline, userLocation, updateLocation, activeRide]);
 
 
   // Flag to know if we have already successfully centered on a real location for the current selection mode
@@ -588,7 +633,7 @@ export default function App() {
       {selectionMode === 'none' && (
         <div className={`scroll-content experience-${mode}`}>
           {mode === 'passenger' ? (
-            !planningStarted && !hasActiveRide ? (
+            !planningStarted && !hasActiveRide && !activeRide ? (
               <div className="home-content" style={{ pointerEvents: 'auto', display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                 <PassengerHome 
                   dropoffAddress={dropoffAddress}
@@ -627,9 +672,9 @@ export default function App() {
                     onLoginRequired={() => onLoginRequired('passenger')}
                     preSelectedVehicle={currentRideType === 'taxi' || currentRideType === 'mototaxi' ? currentRideType : undefined}
                     onHeaderVisibilityChange={setIsHeaderHidden}
-                    onActiveRideChange={(active) => {
-                      setHasActiveRide(active);
-                      if (!active) setActiveRide(null);
+                    onActiveRideChange={(ride) => {
+                      setHasActiveRide(!!ride);
+                      setActiveRide(ride);
                     }}
                     userLocation={userLocation}
                     geoLoading={geoLoading}
@@ -650,6 +695,9 @@ export default function App() {
                    onOnlineChange={setDriverIsOnline}
                    onUserUpdate={(user) => setSession({ user })}
                    activeRideOverride={activeRide || undefined}
+                   unavailableRideId={unavailableRideId || undefined}
+                   newRideSignal={newRideSignal || undefined}
+                   updateLocation={updateLocation}
                  />
                </div>
              </>

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/cloudflare-pages';
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, and, desc, inArray, gte } from 'drizzle-orm';
+import { eq, and, desc, inArray, gte, ne, asc, sql } from 'drizzle-orm';
 import { jwt, sign } from 'hono/jwt';
 import * as schema from '../../src/db/schema';
 
@@ -63,9 +63,81 @@ async function sendPush(pushSubscriptionObjBase64OrJson: string, title: string, 
     });
 
     await webpush.sendNotification(subObj, payload);
-    console.log(`[WebPush] Push enviado exitosamente a la suscripción.`);
   } catch (err) {
     console.error('[WebPush] Error de red o encriptación al enviar push:', err);
+  }
+}
+
+/**
+ * Notifica al Durable Object que un viaje ya no está disponible
+ */
+async function notifyRideUnavailable(env: Bindings, rideId: string) {
+  try {
+    const id = env.LOCATION_TRACKER.idFromName('global');
+    const obj = env.LOCATION_TRACKER.get(id);
+    await obj.fetch('http://do/api/ws', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'ride_unavailable', id: rideId })
+    });
+  } catch (e) {
+    console.error('[LocationTracker] Error enviando ride_unavailable:', e);
+  }
+}
+
+async function notifyChatMessage(env: Bindings, rideId: string, message: any) {
+  try {
+    const id = env.LOCATION_TRACKER.idFromName('global');
+    const obj = env.LOCATION_TRACKER.get(id);
+    await obj.fetch('http://do/api/ws', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'chat_message', rideId, message })
+    });
+  } catch (e) {
+    console.error('[LocationTracker] Error enviando chat_message:', e);
+  }
+}
+
+/**
+ * Notifica a los conductores activos sobre un nuevo viaje propuesto
+ */
+async function notifyAvailableDrivers(c: Context<{ Bindings: Bindings }>, ride: any) {
+  const db = drizzle(c.env.DB, { schema });
+  try {
+    // 1. WebSocket Broadcast via Durable Object
+    const id = c.env.LOCATION_TRACKER.idFromName('global');
+    const obj = c.env.LOCATION_TRACKER.get(id);
+    await obj.fetch('http://do/api/ws', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'new_ride', ride })
+    });
+
+    // 2. Web Push Notifications
+    // Obtenemos conductores activos (limitado a 20 para evitar sobrecarga en push)
+    const activeDrivers = await db.query.drivers.findMany({
+      where: eq(schema.drivers.isActive, true),
+      limit: 20
+    });
+
+    if (activeDrivers.length > 0) {
+      const driverIds = activeDrivers.map(d => d.id);
+      const driverProfiles = await db.query.users.findMany({
+        where: inArray(schema.users.id, driverIds)
+      });
+
+      const pushPromises = driverProfiles
+        .filter(p => p.pushSubscription)
+        .map(p => sendPush(
+          p.pushSubscription!, 
+          ride.rideType === 'ride' ? '🚕 ¡Nuevo Viaje Disponible!' : '📦 ¡Nuevo Mandadito!', 
+          `Un pasajero solicita transporte en ${ride.pickupAddress.split(',')[0]}. ¡Acepta ahora!`, 
+          c,
+          { rideId: ride.id, type: 'NEW_RIDE' }
+        ));
+      
+      await Promise.allSettled(pushPromises);
+    }
+  } catch (e) {
+    console.error('[NotificationService] Error al notificar conductores:', e);
   }
 }
 
@@ -321,7 +393,7 @@ app.get('/routing/route', async (c) => {
 
 app.post('/auth/signup', async (c) => {
   try {
-    const { email, phone, fullName, userType } = await c.req.json();
+    const { email, phone, fullName, userType, id: firebaseId } = await c.req.json();
     const db = drizzle(c.env.DB, { schema });
     const secret = getSecret(c);
 
@@ -330,15 +402,44 @@ app.post('/auth/signup', async (c) => {
       return c.json({ error: 'Todos los campos son obligatorios.' }, 400);
     }
 
-    const newUser = await db.insert(schema.users).values({
-      email, phone, fullName, userType,
-    }).returning();
+    // Normalize phone for consistency
+    const normalizedPhone = phone.startsWith('+') ? phone : `+52${phone.replace(/\D/g, '')}`;
 
-    if (!newUser || newUser.length === 0) {
-      throw new Error('No se pudo crear el usuario en la base de datos.');
+    // 1. Check if user already exists (e.g. created by verify-otp)
+    const existingUser = await db.query.users.findFirst({
+      where: eq(schema.users.phone, normalizedPhone)
+    });
+
+    let user;
+    if (existingUser) {
+      // 2. Update existing placeholder/user
+      const updated = await db.update(schema.users)
+        .set({
+          email,
+          fullName,
+          userType,
+          phone: normalizedPhone,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(schema.users.id, existingUser.id))
+        .returning();
+      user = updated[0];
+    } else {
+      // 3. Fresh insert
+      const newUser = await db.insert(schema.users).values({
+        id: firebaseId || undefined,
+        email,
+        phone: normalizedPhone,
+        fullName,
+        userType,
+      }).returning();
+      user = newUser[0];
     }
 
-    const user = newUser[0];
+    if (!user) {
+      throw new Error('No se pudo procesar el usuario en la base de datos.');
+    }
+
     const payload: JWTPayload = { id: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
     const token = await sign(payload, secret, 'HS256');
     return c.json({ user, token });
@@ -481,6 +582,12 @@ app.post('/auth/verify-otp', async (c) => {
     // 2. If not found by UID, try by Phone (if not anonymous)
     if (!user && firebasePhone) {
       user = await db.query.users.findFirst({ where: eq(schema.users.phone, firebasePhone) });
+      
+      // Fallback: try without prefix if it's a 10 digit number in the DB
+      if (!user && firebasePhone.startsWith('+52')) {
+        const phoneWithoutPrefix = firebasePhone.slice(3);
+        user = await db.query.users.findFirst({ where: eq(schema.users.phone, phoneWithoutPrefix) });
+      }
     }
 
     if (!user) {
@@ -513,20 +620,38 @@ app.post('/auth/verify-otp', async (c) => {
       }
     }
 
+    // Marcar códigos OTP previos como usados para este teléfono
+    if (user!.phone) {
+      await db.update(schema.verificationCodes)
+        .set({ used: true })
+        .where(eq(schema.verificationCodes.phone, user!.phone));
+    }
+
+    // Generate JWT Token for Zipp Session
     const secret = getSecret(c);
-    const jwtPayload: JWTPayload = { id: user!.id, email: user!.email || '', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
-    const token = await sign(jwtPayload, secret, 'HS256');
+    const payloadJWT: JWTPayload = { 
+      id: user!.id, 
+      email: user!.email, 
+      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
+    };
+    const token = await sign(payloadJWT, secret, 'HS256');
 
     return c.json({
       success: true,
       user,
       token,
-      isNewUser: user!.phone.startsWith('anon_')
+      isNewUser: user!.phone.startsWith('anon_') || user!.fullName === 'Usuario Zipp'
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Backend Firebase Integration Error:', err);
-    return c.json({ error: 'Error de sincronización de identidad', details: message }, 500);
+    console.error('[/auth/verify-otp] Backend Error:', {
+      message,
+      stack: err instanceof Error ? err.stack : undefined
+    });
+    return c.json({ 
+      error: 'Error de sincronización de identidad', 
+      details: message 
+    }, 500);
   }
 });
 
@@ -599,14 +724,93 @@ app.get('/rides/my-active', authGuard, async (c) => {
     ),
     orderBy: [desc(schema.rides.createdAt)]
   });
+
+  // Lógica de expiración automática: Si el viaje sigue en 'requested' por más de 10 min
+  if (activeRide && activeRide.status === 'requested') {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    if (activeRide.createdAt && activeRide.createdAt < tenMinutesAgo) {
+      const [cancelledRide] = await db.update(schema.rides)
+        .set({ status: 'cancelled', cancelledAt: new Date().toISOString() })
+        .where(eq(schema.rides.id, activeRide.id))
+        .returning();
+      
+      // Notificar al tracker para que los conductores limpien si aún lo tenían en lista (aunque el filtro ya lo debería haber quitado)
+      await notifyRideUnavailable(c.env, activeRide.id);
+      
+      return c.json(cancelledRide);
+    }
+  }
+
   return c.json(activeRide || null);
+});
+
+// Get a single ride with embedded public driver info (for passenger tracking screen)
+app.get('/rides/:id/details', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  if (!rideId) return c.json({ error: 'ID de viaje requerido' }, 400);
+
+  const db = drizzle(c.env.DB, { schema });
+
+  const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId) });
+  if (!ride) return c.json({ error: 'Viaje no encontrado' }, 404);
+
+  const payload = c.get('jwtPayload') as JWTPayload;
+  // Seguridad: Solo el pasajero o el conductor del viaje pueden ver los detalles
+  if (ride.passengerId !== payload.id && ride.driverId !== payload.id) {
+    return c.json({ error: 'No tienes permiso para ver los detalles de este viaje' }, 403);
+  }
+
+  let driverInfo = null;
+  if (ride.driverId) {
+    const [driver, driverUser, driverRating] = await Promise.all([
+      db.query.drivers.findFirst({ where: eq(schema.drivers.id, ride.driverId) }),
+      db.query.users.findFirst({ where: eq(schema.users.id, ride.driverId) }),
+      db.query.ratingSummary.findFirst({ where: eq(schema.ratingSummary.userId, ride.driverId) }),
+    ]);
+
+    if (driver && driverUser) {
+      driverInfo = {
+        fullName: driverUser.fullName,
+        vehicleBrand: driver.vehicleBrand,
+        vehicleModel: driver.vehicleModel,
+        vehicleYear: driver.vehicleYear,
+        vehicleType: driver.vehicleType,
+        licensePlate: driver.licensePlate,
+        rating: driverRating?.averageRating ?? driver.rating ?? 5.0,
+        totalTrips: driver.totalTrips ?? 0,
+      };
+    }
+  }
+
+  return c.json({ ...ride, driverInfo });
 });
 
 app.post('/rides/request', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
-  const { pickup, dropoff, type, price, distance, duration, description, items } = await c.req.json();
-  const db = drizzle(c.env.DB, { schema });
   try {
+    const { pickup, dropoff, type, price, distance, duration, description, items } = await c.req.json();
+    const db = drizzle(c.env.DB, { schema });
+
+    // Anti-Fraude: Validar el precio en el servidor usando tarifas oficiales
+    const VEHICLE_RATES: Record<string, { base: number, km: number, min: number }> = { 
+      'car': { base: 25, km: 10.0, min: 2.0 }, 
+      'taxi': { base: 30, km: 11.0, min: 2.2 }, 
+      'rickshaw': { base: 20, km: 8.0, min: 1.5 }, 
+      'motorcycle': { base: 22, km: 9.0, min: 1.8 }
+    };
+
+    const rates = VEHICLE_RATES[type] || VEHICLE_RATES['car'];
+    const calculatedMinPrice = rates.base + (distance * rates.km) + (duration * rates.min);
+    
+    // Permitir un margen del 15% por variaciones de redondeo o promociones futuras
+    if (price < calculatedMinPrice * 0.85) {
+      console.warn(`[AntiFraud] Bloqueado viaje de $${price}. Geolocalización sugería min: $${calculatedMinPrice}`);
+      return c.json({ 
+        error: 'Precio inválido o manipulado', 
+        details: 'El precio propuesto es demasiado bajo para la distancia solicitada.' 
+      }, 400);
+    }
+    
     // Clear any previous stuck rides for this passenger
     await db.update(schema.rides)
       .set({ status: 'cancelled', cancelledAt: new Date().toISOString() })
@@ -632,6 +836,10 @@ app.post('/rides/request', authGuard, async (c) => {
       errandItems: items,
       status: 'requested',
     }).returning();
+    
+    // Notificar a los conductores de inmediato
+    await notifyAvailableDrivers(c, newRide[0]);
+
     return c.json(newRide[0]);
   } catch (error: any) {
     return c.json({ error: error.message }, 500);
@@ -642,10 +850,40 @@ app.post('/rides/:id/cancel', authGuard, async (c) => {
   const rideId = c.req.param('id') as string;
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
+
+  // 1. Buscar el viaje primero
+  const ride = await db.query.rides.findFirst({
+    where: eq(schema.rides.id, rideId)
+  });
+
+  if (!ride) {
+    return c.json({ error: 'Viaje no encontrado' }, 404);
+  }
+
+  // 2. Verificar que el viaje pertenece al pasajero (flexible: id del JWT O passengerId directo)
+  if (ride.passengerId !== payload.id) {
+    return c.json({ error: 'No tienes permiso para cancelar este viaje' }, 403);
+  }
+
+  // 3. Verificar que el viaje no ha comenzado
+  if (ride.status === 'cancelled') {
+    // Idempotent success to let the frontend clear its state without throwing an error
+    return c.json({ success: true, message: 'El viaje ya había sido cancelado' });
+  }
+
+  if (!['requested', 'accepted'].includes(ride.status)) {
+    return c.json({ error: 'No puedes cancelar un viaje que ya está en camino o ha finalizado' }, 400);
+  }
+
+  // 4. Cancelar el viaje
   await db.update(schema.rides).set({
     status: 'cancelled',
     cancelledAt: new Date().toISOString(),
-  }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.passengerId, payload.id)));
+  }).where(eq(schema.rides.id, rideId));
+
+  // 5. Notificar al tracker para limpiar el overlay de los conductores
+  await notifyRideUnavailable(c.env, rideId);
+  
   return c.json({ success: true });
 });
 
@@ -659,17 +897,34 @@ app.get('/driver/setup', authGuard, async (c) => {
 
 app.post('/driver/setup', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
-  const { vehicleType } = await c.req.json();
+  const {
+    vehicleType,
+    vehicleBrand,
+    vehicleModel,
+    vehicleYear,
+    licensePlate,
+  } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
+
+  // Validate required vehicle fields
+  if (!vehicleType) return c.json({ error: 'Tipo de vehículo requerido' }, 400);
+  if (!vehicleBrand || !vehicleModel) return c.json({ error: 'Marca y modelo del vehículo son requeridos' }, 400);
+  if (!vehicleYear || vehicleYear < 1990 || vehicleYear > new Date().getFullYear() + 1) {
+    return c.json({ error: 'Año del vehículo inválido' }, 400);
+  }
+  if (!licensePlate || licensePlate.trim().length < 3) {
+    return c.json({ error: 'Número de placas requerido' }, 400);
+  }
+
   try {
     const newDriver = await db.insert(schema.drivers)
       .values({
         id: payload.id,
         vehicleType,
-        vehicleBrand: 'N/A',
-        vehicleModel: 'N/A',
-        vehicleYear: 2024,
-        licensePlate: `TEMP-${Date.now()}`,
+        vehicleBrand: vehicleBrand.trim(),
+        vehicleModel: vehicleModel.trim(),
+        vehicleYear: parseInt(vehicleYear, 10),
+        licensePlate: licensePlate.trim().toUpperCase(),
         driverLicense: 'PENDING',
         isActive: true,
         isVerified: true,
@@ -681,13 +936,18 @@ app.post('/driver/setup', authGuard, async (c) => {
         target: schema.drivers.id,
         set: {
           vehicleType,
+          vehicleBrand: vehicleBrand.trim(),
+          vehicleModel: vehicleModel.trim(),
+          vehicleYear: parseInt(vehicleYear, 10),
+          licensePlate: licensePlate.trim().toUpperCase(),
           isActive: true,
           isVerified: true,
           updatedAt: new Date().toISOString()
         }
       })
       .returning();
-    // Also ensure the user record is updated to 'driver' type
+
+    // Ensure the user record is updated to 'driver' type
     await db.update(schema.users)
       .set({ userType: 'driver', updatedAt: new Date().toISOString() })
       .where(eq(schema.users.id, payload.id));
@@ -695,6 +955,11 @@ app.post('/driver/setup', authGuard, async (c) => {
     return c.json(newDriver[0]);
   } catch (error: any) {
     console.error('[/driver/setup] Error:', error);
+    // Handle duplicate license plate
+    const errStr = `${error.message} ${error.cause?.message || ''}`.toLowerCase();
+    if (errStr.includes('unique') && errStr.includes('license_plate')) {
+      return c.json({ error: 'Esas placas ya están registradas por otro conductor.' }, 409);
+    }
     return c.json({ error: error.message }, 500);
   }
 });
@@ -756,12 +1021,34 @@ app.post('/driver/settings', authGuard, async (c) => {
 
 app.get('/rides/available', authGuard, async (c) => {
   const db = drizzle(c.env.DB, { schema });
+  
+  // 10 minutos de expiración para viajes requested
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
   const rides = await db.query.rides.findMany({
-    where: eq(schema.rides.status, 'requested'),
+    where: and(
+      eq(schema.rides.status, 'requested'),
+      gte(schema.rides.createdAt, tenMinutesAgo)
+    ),
     orderBy: [desc(schema.rides.createdAt)],
     limit: 10,
   });
-  return c.json(rides);
+
+  // Enrich each ride with the passenger rating (for driver decision-making)
+  const enriched = await Promise.all(
+    rides.map(async (ride) => {
+      const passengerRating = await db.query.ratingSummary.findFirst({
+        where: eq(schema.ratingSummary.userId, ride.passengerId),
+      });
+      return {
+        ...ride,
+        passengerRating: passengerRating?.averageRating ?? null,
+        passengerTotalRatings: passengerRating?.totalRatings ?? 0,
+      };
+    })
+  );
+
+  return c.json(enriched);
 });
 
 app.get('/rides/active', authGuard, async (c) => {
@@ -781,15 +1068,46 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
 
-  // Fix: Prevent race condition – only accept if ride is still 'requested'
-  const ride = await db.query.rides.findFirst({
-    where: and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested'))
-  });
-  if (!ride) return c.json({ error: 'El viaje ya no está disponible o fue aceptado por otro conductor' }, 409);
+  // 1. Verificar bloqueo administrativo
+  const driver = await db.query.drivers.findFirst({ where: eq(schema.drivers.id, payload.id) });
+  if (driver && driver.isBlocked) {
+    return c.json({ error: 'Tu cuenta de conductor está bloqueada por administración' }, 403);
+  }
 
-  await db.update(schema.rides).set({
+  // 2. Verificar morosidad del conductor
+  const unpaidAmount = driver?.unpaidCommissionAmount ?? 0;
+  if (driver && unpaidAmount > 500) {
+    return c.json({ 
+      error: 'Deuda de comisiones excedida ($' + unpaidAmount.toFixed(2) + ')', 
+      details: 'Debes liquidar tus comisiones pendientes para seguir operando.' 
+    }, 403);
+  }
+
+  // 2. Verificar si el conductor ya tiene un viaje activo (Exclusividad)
+  const activeRideCheck = await db.query.rides.findFirst({
+    where: and(
+      eq(schema.rides.driverId, payload.id),
+      inArray(schema.rides.status, ['accepted', 'arrived', 'in_progress'])
+    )
+  });
+  if (activeRideCheck) {
+    return c.json({ error: 'Ya tienes un viaje activo en curso' }, 400);
+  }
+
+  // 3. Fix: Prevent race condition – only accept if ride is still 'requested'
+  // We use returning() to check if the update actually matched the requested status
+  const updated = await db.update(schema.rides).set({
     driverId: payload.id, status: 'accepted', acceptedAt: new Date().toISOString(),
-  }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested')));
+  }).where(and(eq(schema.rides.id, rideId), eq(schema.rides.status, 'requested'))).returning();
+
+  if (updated.length === 0) {
+    return c.json({ error: 'El viaje ya no está disponible o fue aceptado por otro conductor' }, 409);
+  }
+
+  const ride = updated[0];
+
+  // 4. Notificar al tracker que el viaje ya no está disponible (limpiar overlays)
+  await notifyRideUnavailable(c.env, rideId);
 
   // Trigger push to passenger
   try {
@@ -835,7 +1153,7 @@ app.post('/rides/:id/status', authGuard, async (c) => {
         let commissionAmount = 0;
         let commissionRate = 0;
 
-        // Commission only after 5 trips
+        // Commission only after 5 trips (Incentive for new drivers)
         if (newTotalTrips > 5) {
           commissionRate = 0.10; // 10%
           commissionAmount = (ride.totalFare || 0) * commissionRate;
@@ -844,16 +1162,23 @@ app.post('/rides/:id/status', authGuard, async (c) => {
         update.commissionAmount = commissionAmount;
         update.commissionRate = commissionRate;
 
-        // Update Driver Stats
-        await db.update(schema.drivers).set({
-          totalTrips: newTotalTrips,
-          totalEarnings: (driver.totalEarnings || 0) + (ride.totalFare || 0),
-          unpaidCommissionAmount: (driver.unpaidCommissionAmount || 0) + commissionAmount
-        }).where(eq(schema.drivers.id, driver.id));
+        // Perform both updates atomically using batch
+        await db.batch([
+          db.update(schema.drivers).set({
+            totalTrips: newTotalTrips,
+            totalEarnings: (driver.totalEarnings || 0) + (ride.totalFare || 0),
+            unpaidCommissionAmount: (driver.unpaidCommissionAmount || 0) + commissionAmount,
+            updatedAt: new Date().toISOString()
+          }).where(eq(schema.drivers.id, driver.id)),
+          db.update(schema.rides).set(update).where(eq(schema.rides.id, rideId))
+        ]);
+        
+        return c.json({ success: true });
       }
     }
   }
 
+  // Fallback or other status updates
   await db.update(schema.rides).set(update).where(eq(schema.rides.id, rideId));
   return c.json({ success: true });
 });
@@ -869,30 +1194,119 @@ app.post('/rides/:id/rate', authGuard, async (c) => {
     return c.json({ error: 'Calificación inválida (debe ser de 1 a 5)' }, 400);
   }
 
+  if (payload.id === ratedId) {
+    return c.json({ error: 'No puedes calificarte a ti mismo' }, 400);
+  }
+
   try {
+    // 1. Validate ride exists and is completed
+    const ride = await db.query.rides.findFirst({
+      where: eq(schema.rides.id, rideId)
+    });
+
+    if (!ride) return c.json({ error: 'Viaje no encontrado' }, 404);
+    if (ride.status !== 'completed') {
+      return c.json({ error: 'Solo puedes calificar viajes completados' }, 400);
+    }
+
+    // 2. Validate rater and rated were part of the ride
+    const isRaterPassenger = ride.passengerId === payload.id;
+    const isRaterDriver = ride.driverId === payload.id;
+    const isRatedPassenger = ride.passengerId === ratedId;
+    const isRatedDriver = ride.driverId === ratedId;
+
+    if (!isRaterPassenger && !isRaterDriver) {
+      return c.json({ error: 'No participaste en este viaje' }, 403);
+    }
+
+    if (!isRatedPassenger && !isRatedDriver) {
+      return c.json({ error: 'El usuario calificado no participó en este viaje' }, 400);
+    }
+
+    // 3. Insert rating (Unique constraint will handle double-rating if added to DB)
     await db.insert(schema.ratings).values({
       rideId,
       raterId: payload.id,
       ratedId,
-      rating,
+      rating: Math.floor(rating),
       comment
     });
 
-    // Update global rating of the rated user if they are a driver
-    const driver = await db.query.drivers.findFirst({ where: eq(schema.drivers.id, ratedId) });
-    if (driver) {
-      const allRatings = await db.query.ratings.findMany({ where: eq(schema.ratings.ratedId, ratedId) });
-      const avgRating = allRatings.reduce((acc, curr) => acc + curr.rating, 0) / allRatings.length;
+    // 4. Update rating_summary incrementally
+    const summary = await db.query.ratingSummary.findFirst({
+      where: eq(schema.ratingSummary.userId, ratedId)
+    });
 
-      await db.update(schema.drivers)
-        .set({ rating: avgRating })
-        .where(eq(schema.drivers.id, ratedId));
+    if (summary) {
+      const newTotal = (summary.totalRatings || 0) + 1;
+      const newAverage = ((summary.averageRating || 0) * (summary.totalRatings || 0) + rating) / newTotal;
+
+      await db.update(schema.ratingSummary)
+        .set({
+          averageRating: newAverage,
+          totalRatings: newTotal,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(schema.ratingSummary.userId, ratedId));
+    } else {
+      await db.insert(schema.ratingSummary).values({
+        userId: ratedId,
+        averageRating: rating,
+        totalRatings: 1
+      });
+    }
+
+    // 5. Also update the legacy 'rating' field in drivers table if the rated user is a driver
+    if (isRatedDriver) {
+      const updatedSummary = await db.query.ratingSummary.findFirst({
+        where: eq(schema.ratingSummary.userId, ratedId)
+      });
+      if (updatedSummary) {
+        await db.update(schema.drivers)
+          .set({ rating: updatedSummary.averageRating })
+          .where(eq(schema.drivers.id, ratedId));
+      }
     }
 
     return c.json({ success: true });
   } catch (error: any) {
+    if (error.message?.includes('UNIQUE') || error.cause?.message?.includes('UNIQUE')) {
+       return c.json({ error: 'Ya has calificado este viaje para este usuario' }, 409);
+    }
     return c.json({ error: error.message }, 500);
   }
+});
+
+app.get('/ratings/user/:id', authGuard, async (c) => {
+  const userId = c.req.param('id');
+  if (!userId) return c.json({ error: 'ID de usuario requerido' }, 400);
+
+  const db = drizzle(c.env.DB, { schema });
+
+  const userRatings = await db.query.ratings.findMany({
+    where: eq(schema.ratings.ratedId, userId),
+    orderBy: [desc(schema.ratings.createdAt)],
+    limit: 50
+  });
+
+  return c.json(userRatings);
+});
+
+app.get('/ratings/summary/:id', async (c) => {
+  const userId = c.req.param('id');
+  if (!userId) return c.json({ error: 'ID de usuario requerido' }, 400);
+
+  const db = drizzle(c.env.DB, { schema });
+
+  const summary = await db.query.ratingSummary.findFirst({
+    where: eq(schema.ratingSummary.userId, userId)
+  });
+
+  if (!summary) {
+    return c.json({ userId, averageRating: 5.0, totalRatings: 0 });
+  }
+
+  return c.json(summary);
 });
 
 // Real-time & Security Endpoints
@@ -917,6 +1331,19 @@ app.post('/driver/status', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const { isActive } = await c.req.json();
   const db = drizzle(c.env.DB, { schema });
+
+  // Seguridad: No permitir irse offline si hay un viaje activo
+  if (isActive === false) {
+    const activeRideCheck = await db.query.rides.findFirst({
+      where: and(
+        eq(schema.rides.driverId, payload.id),
+        inArray(schema.rides.status, ['accepted', 'arrived', 'in_progress'])
+      )
+    });
+    if (activeRideCheck) {
+      return c.json({ error: 'No puedes ponerte fuera de línea mientras tienes un viaje activo' }, 400);
+    }
+  }
 
   await db.update(schema.drivers)
     .set({
@@ -970,13 +1397,28 @@ app.get('/drivers/nearby', async (c) => {
 
 
 app.post('/verify-identity', authGuard, async (c) => {
-  const { type } = await c.req.json();
+  const { type, name, phone } = await c.req.json();
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
 
-  // Fix: Persist verified = true in the users table for real
+  // 1. Si se intenta actualizar el teléfono, verificar que no esté en uso por otro ID
+  if (phone) {
+    const existing = await db.query.users.findFirst({
+      where: and(eq(schema.users.phone, phone), ne(schema.users.id, payload.id))
+    });
+    if (existing) {
+      return c.json({ error: 'Este número de teléfono ya está vinculado a otra cuenta' }, 409);
+    }
+  }
+
+  // 2. Persistir verificado y datos básicos
   await db.update(schema.users)
-    .set({ verified: true, updatedAt: new Date().toISOString() })
+    .set({ 
+      verified: true, 
+      fullName: name || undefined, 
+      phone: phone || undefined,
+      updatedAt: new Date().toISOString() 
+    })
     .where(eq(schema.users.id, payload.id));
 
   if (type === 'driver') {
@@ -987,6 +1429,59 @@ app.post('/verify-identity', authGuard, async (c) => {
 
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, payload.id) });
   return c.json({ success: true, user });
+});
+
+// Cancelación lado conductor (No-show o emergencia)
+app.post('/rides/:id/driver-cancel', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const db = drizzle(c.env.DB, { schema });
+
+  const ride = await db.query.rides.findFirst({ where: eq(schema.rides.id, rideId!) });
+  if (!ride || ride.driverId !== payload.id) {
+    return c.json({ error: 'No autorizado o viaje no encontrado' }, 403);
+  }
+
+  if (ride.status === 'in_progress') {
+    return c.json({ error: 'No puedes cancelar un viaje que ya ha iniciado' }, 400);
+  }
+
+  await db.update(schema.rides)
+    .set({ 
+      status: 'cancelled', 
+      cancelledAt: new Date().toISOString(),
+    })
+    .where(eq(schema.rides.id, rideId!));
+
+  await notifyRideUnavailable(c.env, rideId!);
+  return c.json({ success: true });
+});
+
+// Chat Endpoints
+app.get('/rides/:id/messages', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  const db = drizzle(c.env.DB, { schema });
+  const messages = await db.query.rideMessages.findMany({
+    where: eq(schema.rideMessages.rideId, rideId!),
+    orderBy: [asc(schema.rideMessages.createdAt)]
+  });
+  return c.json(messages);
+});
+
+app.post('/rides/:id/messages', authGuard, async (c) => {
+  const rideId = c.req.param('id');
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const { text } = await c.req.json();
+  const db = drizzle(c.env.DB, { schema });
+
+  const [newMessage] = await db.insert(schema.rideMessages).values({
+    rideId: rideId!,
+    senderId: payload.id,
+    text: text.trim(),
+  }).returning();
+
+  await notifyChatMessage(c.env, rideId!, newMessage);
+  return c.json(newMessage);
 });
 
 // Mercado Pago Integration
@@ -1059,20 +1554,83 @@ app.post('/payments/webhook', async (c) => {
       headers: { 'Authorization': `Bearer ${mercadoPagoAccessToken}` }
     });
 
+    if (!mpRes.ok) return c.text('Provider Error', 500);
+
     const payment = await mpRes.json() as any;
     if (payment.status === 'approved') {
       const preferenceId = payment.order?.id || payment.preference_id;
       if (preferenceId) {
-        await db.update(schema.commissionPayments).set({
-          status: 'approved',
-          mercadopagoPaymentId: paymentId.toString(),
-          paidAt: new Date().toISOString(),
-        }).where(eq(schema.commissionPayments.mercadopagoPreferenceId, preferenceId));
+        // 1. Bucar el registro del pago pendiente
+        const commPayment = await db.query.commissionPayments.findFirst({
+          where: and(
+            eq(schema.commissionPayments.mercadopagoPreferenceId, preferenceId),
+            eq(schema.commissionPayments.status, 'pending') // Solo procesar si sigue pendiente
+          )
+        });
+
+        if (commPayment) {
+          // 2. Actualizar el pago a aprobado y restar la deuda del conductor atómicamente
+          await db.batch([
+            db.update(schema.commissionPayments).set({
+              status: 'approved',
+              mercadopagoPaymentId: paymentId.toString(),
+              paidAt: new Date().toISOString(),
+            }).where(eq(schema.commissionPayments.id, commPayment.id)),
+
+            // Actualizar la deuda en la tabla drivers de forma atómica
+            db.update(schema.drivers)
+              .set({
+                unpaidCommissionAmount: sql`${schema.drivers.unpaidCommissionAmount} - ${commPayment.amount}`,
+                updatedAt: new Date().toISOString()
+              })
+              .where(eq(schema.drivers.id, commPayment.driverId))
+          ]);
+        }
       }
     }
   }
 
   return c.text('OK');
+});
+
+// File Management with R2
+app.post('/upload', authGuard, async (c) => {
+  const form = await c.req.formData();
+  const file = form.get('file') as File;
+  
+  if (!file) {
+    return c.json({ error: 'No file provided' }, 400);
+  }
+
+  const payload = c.get('jwtPayload') as JWTPayload;
+  const extension = file.name.split('.').pop() || 'jpg';
+  const key = `uploads/${payload.id}/${crypto.randomUUID()}.${extension}`;
+  
+  await c.env.STORAGE.put(key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type }
+  });
+
+  return c.json({ 
+    success: true, 
+    url: `/api/files/${key}`,
+    key
+  });
+});
+
+app.get('/files/:key{.+}', async (c) => {
+  const key = c.req.param('key');
+  const file = await c.env.STORAGE.get(key);
+
+  if (!file) {
+    return c.text('File not found', 404);
+  }
+
+  const headers = new Headers();
+  file.writeHttpMetadata(headers as any);
+  headers.set('etag', file.httpEtag);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+  return new Response(file.body as any, { headers });
 });
 
 export const onRequest = handle(app);

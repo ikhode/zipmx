@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import APIClient, { APIUser, APIRide } from '../lib/api';
+import APIClient, { APIUser, APIRide, DriverPublicInfo } from '../lib/api';
 import { searchAddresses, formatAddress, GeocodingResult } from '../lib/geocoding';
 import { useToast } from './ToastProvider';
 import { triggerHaptic } from '../lib/haptics';
 import { playNotificationSound, playSuccessSound } from '../lib/audio';
 import { PostRideSummary } from './PostRideSummary';
+import { ChatSheet } from './ChatSheet';
 
 // --- Constants ---
 const VEHICLE_RATES: Record<string, { base: number, km: number, min: number }> = { 
@@ -42,7 +43,7 @@ interface RideRequestSheetProps {
   onLoginRequired: (reason?: string) => void;
   preSelectedVehicle?: string;
   onHeaderVisibilityChange: (hide: boolean) => void;
-  onActiveRideChange?: (active: boolean) => void;
+  onActiveRideChange?: (ride: APIRide | null) => void;
   /** GPS coords of the device, null if not obtained yet */
   userLocation?: [number, number] | null;
   /** True while waiting for the first GPS fix */
@@ -80,22 +81,31 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
 
   const [suggestions, setSuggestions] = useState<GeocodingResult[]>([]);
   const [searchText, setSearchText] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [step, setStep] = useState<'service' | 'selection' | 'tracking'>('service');
   const [activeRide, setActiveRide] = useState<APIRide | null>(null);
+  const [driverInfo, setDriverInfo] = useState<DriverPublicInfo | null>(null);
   const prevRideStatusRef = useRef<string | null>(null);
   
   useEffect(() => {
     if (activeRide) {
       if (prevRideStatusRef.current !== activeRide.status) {
-         if (activeRide.status === 'accepted') playSuccessSound();
+         if (activeRide.status === 'accepted') {
+           playSuccessSound();
+           // Fetch real driver info as soon as the ride is accepted
+           APIClient.getRideDetails(activeRide.id)
+             .then(details => { if (details.driverInfo) setDriverInfo(details.driverInfo); })
+             .catch(console.error);
+         }
          if (activeRide.status === 'arrived') playNotificationSound();
          if (activeRide.status === 'completed') playSuccessSound();
       }
       prevRideStatusRef.current = activeRide.status;
     } else {
       prevRideStatusRef.current = null;
+      setDriverInfo(null);
     }
-    onActiveRideChange?.(!!activeRide);
+    onActiveRideChange?.(activeRide);
   }, [activeRide, onActiveRideChange]);
   
   const [vehicleType, setVehicleType] = useState<string>(preSelectedVehicle || 'car');
@@ -136,18 +146,32 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
     else if (typeof focusedInput === 'object') setSearchText(stops[focusedInput.index]?.address || '');
   }, [focusedInput, isPlanning]);
 
+  const trackingStartedAtRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (activeRideOverride) {
-      setActiveRide(activeRideOverride);
-      setStep('tracking');
+      // Si el override es un viaje completado/cancelado Y ya estamos en tracking, limpiamos
+      if (activeRideOverride.status === 'cancelled' || activeRideOverride.status === 'completed') {
+        if (step === 'tracking') {
+          setActiveRide(null);
+          setStep('service');
+          trackingStartedAtRef.current = null;
+        }
+      } else {
+        setActiveRide(activeRideOverride);
+        setStep('tracking');
+        if (!trackingStartedAtRef.current) trackingStartedAtRef.current = Date.now();
+      }
     } else if (step === 'tracking' && !activeRideOverride) {
-      // Solo regresamos a service si localmente tampoco tenemos un viaje activo
-      // Esto evita el reset durante el pequeño lapso entre la creación del viaje y el primer poll exitoso
-      if (!activeRide) {
+      // Solo regresamos a service si no tenemos viaje local Y ha pasado suficiente tiempo
+      // (evita el flash cuando el servidor aún está procesando el viaje recién creado)
+      const elapsed = trackingStartedAtRef.current ? Date.now() - trackingStartedAtRef.current : 999999;
+      if (!activeRide && elapsed > 3000) {
         setStep('service');
+        trackingStartedAtRef.current = null;
       }
     }
-  }, [activeRideOverride]);
+  }, [activeRideOverride, step, activeRide]);
 
   useEffect(() => {
     onHeaderVisibilityChange(isPlanning || step === 'tracking');
@@ -244,6 +268,7 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
       
       setActiveRide(newRide);
       setStep('tracking');
+      if (onActiveRideChange) onActiveRideChange(newRide);
       showToast('Buscando conductor...', 'success');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido';
@@ -314,22 +339,22 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
           </div>
 
           <div className={`driver-arrival-card stagger-in ${activeRide.status === 'arrived' ? 'attention-pulse-bg' : ''}`} style={{ transition: 'background-color 0.4s ease' }}>
-             {activeRide.status === 'requested' ? (
-               <div style={{ transform: 'scale(0.8)', margin: '-20px 0' }}>
-                 <RadarSearch />
-               </div>
-             ) : (
-               <div className="driver-main-info fade-in" style={{ gap: '20px' }}>
+              {activeRide.status === 'requested' || (activeRide.status === 'cancelled' && !activeRide.driverId) ? (
+                <div style={{ transform: 'scale(0.8)', margin: '-20px 0' }}>
+                  <RadarSearch />
+                </div>
+              ) : (
+                <div className="driver-main-info fade-in" style={{ gap: '20px' }}>
                   <div className="driver-photo-premium" style={{ width: '72px', height: '72px', fontSize: '36px' }}>
                      👤
                   </div>
                   <div className="driver-detail-premium">
                      <div className="driver-name-text" style={{ fontSize: '22px' }}>
-                        Juan G.
+                        {driverInfo?.fullName?.split(' ')[0] || 'Conductor'}
                      </div>
                      <div className="driver-rating-mini" style={{ fontSize: '14px', marginTop: '4px' }}>
-                        <span>⭐ 4.9</span>
-                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>• 1,240 viajes</span>
+                        <span>⭐ {driverInfo ? driverInfo.rating.toFixed(1) : '—'}</span>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>• {driverInfo ? `${driverInfo.totalTrips.toLocaleString()} viajes` : 'Cargando...'}</span>
                      </div>
                   </div>
                   <div className="driver-action-mini">
@@ -341,10 +366,16 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
              {activeRide.status !== 'requested' && (
                <div className="vehicle-badge-premium fade-in" style={{ marginTop: '24px', background: 'linear-gradient(135deg, #111827 0%, #1F2937 100%)', padding: '16px 20px' }}>
                   <div className="v-brand-plate">
-                     <span className="v-plate-text" style={{ fontSize: '16px' }}>ZIP 123</span>
-                     <span className="v-model-text" style={{ fontSize: '12px', color: '#9CA3AF' }}>Toyota Corolla • Blanco</span>
+                     <span className="v-plate-text" style={{ fontSize: '16px' }}>
+                       {driverInfo?.licensePlate || '———'}
+                     </span>
+                     <span className="v-model-text" style={{ fontSize: '12px', color: '#9CA3AF' }}>
+                       {driverInfo ? `${driverInfo.vehicleBrand} ${driverInfo.vehicleModel} ${driverInfo.vehicleYear}` : 'Cargando datos...'}
+                     </span>
                   </div>
-                  <div className="v-icon-m" style={{ fontSize: '32px' }}>🚗</div>
+                  <div className="v-icon-m" style={{ fontSize: '32px' }}>
+                    {driverInfo?.vehicleType === 'motorcycle' ? '🏍️' : driverInfo?.vehicleType === 'taxi' ? '🚕' : driverInfo?.vehicleType === 'rickshaw' ? '🛺' : '🚗'}
+                  </div>
                </div>
              )}
           </div>
@@ -373,10 +404,29 @@ export function RideRequestSheet(props: RideRequestSheetProps) {
             >
               🆘
             </button>
+            <button 
+              className="interactive-scale" 
+              onClick={() => {
+                setIsChatOpen(true);
+                triggerHaptic('light');
+              }}
+              style={{ width: '60px', borderRadius: '16px', background: '#F1F5F9', color: '#111827', border: 'none', fontWeight: 900, fontSize: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              title="Chat"
+            >
+              💬
+            </button>
             <button className="minimal-cancel-btn interactive-scale" style={{ flex: 1, marginTop: 0, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0' }} onClick={() => cancelRide(activeRide.id)}>
               {activeRide.status === 'requested' ? 'Cancelar búsqueda' : 'Cancelar viaje'}
             </button>
           </div>
+          
+          {isChatOpen && (
+            <ChatSheet 
+              rideId={activeRide.id} 
+              currentUser={session?.user || null} 
+              onClose={() => setIsChatOpen(false)} 
+            />
+          )}
         </div>
       </div>
     );

@@ -13,6 +13,23 @@ interface OTPResponse extends AuthResponse {
   isNewUser: boolean;
 }
 
+export interface DriverPublicInfo {
+  fullName: string;
+  vehicleBrand: string;
+  vehicleModel: string;
+  vehicleYear: number;
+  vehicleType: string;
+  licensePlate: string;
+  rating: number;
+  totalTrips: number;
+}
+
+/** Ride returned by /rides/available — includes passenger rating fields */
+export type EnrichedRide = APIRide & {
+  passengerRating: number | null;
+  passengerTotalRatings: number;
+};
+
 class APIClient {
   private static token: string | null = localStorage.getItem('zipp_auth_token');
 
@@ -139,6 +156,10 @@ class APIClient {
     return await this.request<APIRide | null>('/rides/my-active');
   }
 
+  static async getRideDetails(rideId: string): Promise<APIRide & { driverInfo?: DriverPublicInfo | null }> {
+    return await this.request(`/rides/${rideId}/details`);
+  }
+
   static async requestRide(data: {
     pickup: { lat: number, lng: number, address: string },
     dropoff: { lat: number, lng: number, address: string },
@@ -166,10 +187,16 @@ class APIClient {
     return await this.request('/driver/setup');
   }
 
-  static async setupDriver(vehicleType: string) {
+  static async setupDriver(data: {
+    vehicleType: string;
+    vehicleBrand: string;
+    vehicleModel: string;
+    vehicleYear: number;
+    licensePlate: string;
+  }) {
     return await this.request('/driver/setup', {
       method: 'POST',
-      body: JSON.stringify({ vehicleType }),
+      body: JSON.stringify(data),
     });
   }
 
@@ -209,8 +236,8 @@ class APIClient {
     return await this.request(`/drivers/nearby?lat=${lat}&lng=${lng}`);
   }
 
-  static async getAvailableRides() {
-    return await this.request('/rides/available');
+  static async getAvailableRides(): Promise<EnrichedRide[]> {
+    return await this.request<EnrichedRide[]>('/rides/available');
   }
 
   static async getActiveRide() {
@@ -228,6 +255,14 @@ class APIClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  static async getUserRatings(userId: string) {
+    return await this.request(`/ratings/user/${userId}`);
+  }
+
+  static async getRatingSummary(userId: string) {
+    return await this.request(`/ratings/summary/${userId}`);
   }
 
   static async updateRideStatus(rideId: string, status: string) {
@@ -291,6 +326,24 @@ class APIClient {
 
   static get isAuthenticated() {
     return !!this.token;
+  }
+
+  static async createPayment(data: { amount: number, paymentMethod: string, description: string }): Promise<{ preference_id: string, init_point: string }> {
+    return await this.request('/payments/create', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  static async getRideMessages(rideId: string): Promise<any[]> {
+    return await this.request(`/rides/${rideId}/messages`);
+  }
+
+  static async sendChatMessage(rideId: string, text: string) {
+    return await this.request(`/rides/${rideId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text })
+    });
   }
 }
 
