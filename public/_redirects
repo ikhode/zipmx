@@ -1,0 +1,5 @@
+# Cloudflare Pages _redirects
+# SPA fallback: static files are served first (assets/, index.html, sw.js, etc.)
+# Only when no static file matches does this rule kick in → serve index.html
+# This allows React client-side routing to work without 404s
+/*  /index.html  200
