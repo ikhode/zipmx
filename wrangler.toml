@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "zipp_database"
-database_id = "8a89a445-7646-414d-9aad-4e0d973d0f7b"
+database_id = "d29e3ba1-d904-4727-84ff-80ecd44f703a"
 migrations_dir = "./drizzle"
 
 [[durable_objects.bindings]]

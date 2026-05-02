@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/cloudflare-pages';
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, and, desc, inArray, gte } from 'drizzle-orm';
+import { eq, and, desc, inArray, gte, ne, asc, sql } from 'drizzle-orm';
 import { jwt, sign } from 'hono/jwt';
 import * as schema from '../../src/db/schema';
 
@@ -851,21 +851,32 @@ app.post('/rides/:id/cancel', authGuard, async (c) => {
   const payload = c.get('jwtPayload') as JWTPayload;
   const db = drizzle(c.env.DB, { schema });
 
-  // Solo permitir cancelar si el viaje no ha comenzado (requested, accepted)
-  const updated = await db.update(schema.rides).set({
-    status: 'cancelled',
-    cancelledAt: new Date().toISOString(),
-  }).where(and(
-    eq(schema.rides.id, rideId), 
-    eq(schema.rides.passengerId, payload.id),
-    inArray(schema.rides.status, ['requested', 'accepted'])
-  )).returning();
+  // 1. Buscar el viaje primero
+  const ride = await db.query.rides.findFirst({
+    where: eq(schema.rides.id, rideId)
+  });
 
-  if (updated.length === 0) {
+  if (!ride) {
+    return c.json({ error: 'Viaje no encontrado' }, 404);
+  }
+
+  // 2. Verificar que el viaje pertenece al pasajero (flexible: id del JWT O passengerId directo)
+  if (ride.passengerId !== payload.id) {
+    return c.json({ error: 'No tienes permiso para cancelar este viaje' }, 403);
+  }
+
+  // 3. Verificar que el viaje no ha comenzado
+  if (!['requested', 'accepted'].includes(ride.status)) {
     return c.json({ error: 'No puedes cancelar un viaje que ya está en camino o ha finalizado' }, 400);
   }
-  
-  // Notificar al tracker para limpiar el overlay de los conductores (si aplica)
+
+  // 4. Cancelar el viaje
+  await db.update(schema.rides).set({
+    status: 'cancelled',
+    cancelledAt: new Date().toISOString(),
+  }).where(eq(schema.rides.id, rideId));
+
+  // 5. Notificar al tracker para limpiar el overlay de los conductores
   await notifyRideUnavailable(c.env, rideId);
   
   return c.json({ success: true });
@@ -1059,9 +1070,10 @@ app.post('/rides/:id/accept', authGuard, async (c) => {
   }
 
   // 2. Verificar morosidad del conductor
-  if (driver && (driver.unpaidCommissionAmount || 0) > 500) {
+  const unpaidAmount = driver?.unpaidCommissionAmount ?? 0;
+  if (driver && unpaidAmount > 500) {
     return c.json({ 
-      error: 'Deuda de comisiones excedida ($' + driver.unpaidCommissionAmount.toFixed(2) + ')', 
+      error: 'Deuda de comisiones excedida ($' + unpaidAmount.toFixed(2) + ')', 
       details: 'Debes liquidar tus comisiones pendientes para seguir operando.' 
     }, 403);
   }
@@ -1433,7 +1445,6 @@ app.post('/rides/:id/driver-cancel', authGuard, async (c) => {
     .set({ 
       status: 'cancelled', 
       cancelledAt: new Date().toISOString(),
-      notes: (ride.notes || '') + ' [Cancelado por conductor]'
     })
     .where(eq(schema.rides.id, rideId!));
 
@@ -1610,11 +1621,11 @@ app.get('/files/:key{.+}', async (c) => {
   }
 
   const headers = new Headers();
-  file.writeHttpMetadata(headers);
+  file.writeHttpMetadata(headers as any);
   headers.set('etag', file.httpEtag);
   headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
-  return new Response(file.body, { headers });
+  return new Response(file.body as any, { headers });
 });
 
 export const onRequest = handle(app);
