@@ -588,7 +588,7 @@ export default function App() {
       {selectionMode === 'none' && (
         <div className={`zipp-premium-header ${isHeaderHidden ? 'hidden' : ''} mode-${mode}`}>
           <div className="zipp-header-left stagger-in">
-            <span className="zipp-logo-text">Zipp</span>
+            <img src="/logo.png" alt="Zipp Logo" style={{ height: '36px', width: 'auto', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }} />
           </div>
           <div className="zipp-header-right stagger-in">
             {!session ? (
@@ -840,7 +840,7 @@ export default function App() {
       {showSplash && (
         <div className={`app-splash-screen ${splashFading ? 'fade-out' : ''}`}>
            <div className="splash-logo-container">
-              <div className="splash-logo-text">Zipp</div>
+              <img src="/logo.png" alt="Zipp Logo" style={{ height: '80px', width: 'auto', filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.3))', marginBottom: '24px' }} />
               <div className="splash-loader-bar"><div className="splash-loader-progress"></div></div>
            </div>
         </div>

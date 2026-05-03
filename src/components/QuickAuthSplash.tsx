@@ -34,8 +34,8 @@ export function QuickAuthSplash({ userType, onClose, onShowFullAuth }: QuickAuth
     <div className="quick-auth-splash fade-in">
       <div className="splash-content">
         <div className="splash-header">
-           <div className="logo-box-premium">
-             <span>Zipp</span>
+           <div className="logo-box-premium" style={{ background: 'transparent', boxShadow: 'none' }}>
+             <img src="/logo.png" alt="Zipp Logo" style={{ height: '48px', width: 'auto', filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.2))' }} />
            </div>
            <p className="splash-subtitle">Para continuar, regístrate en segundos</p>
         </div>
