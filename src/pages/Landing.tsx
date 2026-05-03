@@ -7,7 +7,7 @@ export default function Landing() {
     <div className="landing-container">
       <nav className="landing-nav">
         <Link to="/" className="landing-logo">
-          <img src="/logo.png" alt="Zipp Logo" style={{ height: '70px', width: 'auto', mixBlendMode: 'multiply' }} />
+          <img src="/logo.png" alt="Zipp Logo" style={{ height: '140px', width: 'auto', mixBlendMode: 'multiply', margin: '-30px 0' }} />
         </Link>
         <div className="landing-nav-links">
           <a href="#features">Características</a>
@@ -29,7 +29,7 @@ export default function Landing() {
 
       <footer className="landing-footer">
         <div className="landing-logo">
-          <img src="/logo.png" alt="Zipp Logo" style={{ height: '60px', width: 'auto', mixBlendMode: 'multiply' }} />
+          <img src="/logo.png" alt="Zipp Logo" style={{ height: '100px', width: 'auto', mixBlendMode: 'multiply' }} />
         </div>
         <p style={{ color: 'var(--text-secondary)' }}>© {new Date().getFullYear()} Zipp Technologies. Todos los derechos reservados.</p>
         <div className="footer-links">
