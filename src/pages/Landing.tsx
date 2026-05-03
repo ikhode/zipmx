@@ -7,8 +7,7 @@ export default function Landing() {
     <div className="landing-container">
       <nav className="landing-nav">
         <Link to="/" className="landing-logo">
-          <img src="/logo.png" alt="Zipp Logo" onError={(e) => { e.currentTarget.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%232563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><path d="M10 14l4-8-4 8z"/></svg>'}} />
-          <span>Zipp</span>
+          <img src="/logo.png" alt="Zipp Logo" style={{ height: '70px', width: 'auto', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }} />
         </Link>
         <div className="landing-nav-links">
           <a href="#features">Características</a>
@@ -29,9 +28,8 @@ export default function Landing() {
       </main>
 
       <footer className="landing-footer">
-        <div className="landing-logo" style={{ fontSize: '1.25rem' }}>
-          <img src="/logo.png" alt="Zipp Logo" style={{ height: '30px' }} onError={(e) => { e.currentTarget.style.display = 'none'}} />
-          <span>Zipp</span>
+        <div className="landing-logo">
+          <img src="/logo.png" alt="Zipp Logo" style={{ height: '60px', width: 'auto', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }} />
         </div>
         <p style={{ color: 'var(--text-secondary)' }}>© {new Date().getFullYear()} Zipp Technologies. Todos los derechos reservados.</p>
         <div className="footer-links">
