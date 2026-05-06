@@ -1,8 +1,28 @@
-
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import '../styles/landing.css';
 
 export default function Landing() {
+  useEffect(() => {
+    if (!document.getElementById('ga-script')) {
+      const script1 = document.createElement('script');
+      script1.id = 'ga-script';
+      script1.async = true;
+      script1.src = 'https://www.googletagmanager.com/gtag/js?id=G-JYCXSJJSYR';
+      document.head.appendChild(script1);
+
+      const script2 = document.createElement('script');
+      script2.id = 'ga-init-script';
+      script2.innerHTML = `
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-JYCXSJJSYR');
+      `;
+      document.head.appendChild(script2);
+    }
+  }, []);
+
   return (
     <div className="landing-container">
       <nav className="landing-nav">
